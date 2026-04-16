@@ -1,0 +1,369 @@
+fileFormatVersion: 2
+guid: bf6c8766ad724e34cac4cb1576d0f832
+TextureImporter:
+  internalIDToNameTable: []
+  externalObjects: {}
+  serializedVersion: 13
+  mipmaps:
+    mipMapMode: 0
+    enableMipMap: 0
+    sRGBTexture: 1
+    linearTexture: 0
+    fadeOut: 0
+    borderMipMap: 0
+    mipMapsPreserveCoverage: 0
+    alphaTestReferenceValue: 0.5
+    mipMapFadeDistanceStart: 1
+    mipMapFadeDistanceEnd: 3
+  bumpmap:
+    convertToNormalMap: 0
+    externalNormalMap: 0
+    heightScale: 0.25
+    normalMapFilter: 0
+    flipGreenChannel: 0
+  isReadable: 0
+  streamingMipmaps: 0
+  streamingMipmapsPriority: 0
+  vTOnly: 0
+  ignoreMipmapLimit: 0
+  grayScaleToAlpha: 0
+  generateCubemap: 6
+  cubemapConvolution: 0
+  seamlessCubemap: 0
+  textureFormat: 1
+  maxTextureSize: 2048
+  textureSettings:
+    serializedVersion: 2
+    filterMode: 0
+    aniso: 1
+    mipBias: 0
+    wrapU: 1
+    wrapV: 1
+    wrapW: 1
+  nPOTScale: 0
+  lightmap: 0
+  compressionQuality: 50
+  spriteMode: 2
+  spriteExtrude: 1
+  spriteMeshType: 1
+  alignment: 0
+  spritePivot: {x: 0.5, y: 0.5}
+  spritePixelsToUnits: 32
+  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
+  spriteGenerateFallbackPhysicsShape: 1
+  alphaUsage: 1
+  alphaIsTransparency: 1
+  spriteTessellationDetail: -1
+  textureType: 8
+  textureShape: 1
+  singleChannelComponent: 0
+  flipbookRows: 1
+  flipbookColumns: 1
+  maxTextureSizeSet: 0
+  compressionQualitySet: 0
+  textureFormatSet: 0
+  ignorePngGamma: 0
+  applyGammaDecoding: 0
+  swizzle: 50462976
+  cookieLightType: 0
+  platformSettings:
+  - serializedVersion: 3
+    buildTarget: DefaultTexturePlatform
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: 4
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  - serializedVersion: 3
+    buildTarget: Standalone
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  - serializedVersion: 3
+    buildTarget: Android
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  spriteSheet:
+    serializedVersion: 2
+    sprites:
+    - serializedVersion: 2
+      name: SlimWall_0
+      rect:
+        serializedVersion: 2
+        x: 42
+        y: 167
+        width: 36
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5555556, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 2182c3f684285a845aa27d7dca55d3bc
+      internalID: -2068724417
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_1
+      rect:
+        serializedVersion: 2
+        x: 105
+        y: 166
+        width: 38
+        height: 47
+      alignment: 9
+      pivot: {x: 0.42105263, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: bd4687b255d76e4438429b1e624609e6
+      internalID: -295507349
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_2
+      rect:
+        serializedVersion: 2
+        x: 161
+        y: 167
+        width: 36
+        height: 47
+      alignment: 9
+      pivot: {x: 0.44444445, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 1735c53f425dd89459f594e744d56eb4
+      internalID: -1337152684
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_3
+      rect:
+        serializedVersion: 2
+        x: 211
+        y: 167
+        width: 36
+        height: 48
+      alignment: 9
+      pivot: {x: 0.44444445, y: 0.33333334}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 8cf91f337e1c9cc448fc0c4c3be6181c
+      internalID: -1139961368
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_4
+      rect:
+        serializedVersion: 2
+        x: 47
+        y: 77
+        width: 32
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 933fd93029179ff4d9872a4221c79c07
+      internalID: -845742708
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_5
+      rect:
+        serializedVersion: 2
+        x: 170
+        y: 77
+        width: 32
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: ab51b471a13bde2478ea7152f37e0e1b
+      internalID: 720385340
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_6
+      rect:
+        serializedVersion: 2
+        x: 79
+        y: 77
+        width: 32
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 1f433dbb00fadb2409a7d553c0758626
+      internalID: 703076584
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_7
+      rect:
+        serializedVersion: 2
+        x: 111
+        y: 77
+        width: 32
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: b4b17b1a97803bd40be1f1eefc741466
+      internalID: -1865667509
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_8
+      rect:
+        serializedVersion: 2
+        x: 202
+        y: 77
+        width: 32
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 61a447e99bc7d884a8711ae0a82f5f38
+      internalID: 1945731103
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_9
+      rect:
+        serializedVersion: 2
+        x: 189
+        y: 167
+        width: 36
+        height: 47
+      alignment: 9
+      pivot: {x: 0.5555556, y: 0.34042552}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 4f2ee7f5fec67f347be442a9ca97d2c4
+      internalID: -1239389531
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: SlimWall_10
+      rect:
+        serializedVersion: 2
+        x: 239
+        y: 167
+        width: 36
+        height: 48
+      alignment: 9
+      pivot: {x: 0.5555556, y: 0.33333334}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      outline: []
+      physicsShape: []
+      tessellationDetail: 0
+      bones: []
+      spriteID: 82d444141362f8a4ab731ebf06c5ed57
+      internalID: -458141166
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    outline: []
+    physicsShape: []
+    bones: []
+    spriteID: 5e97eb03825dee720800000000000000
+    internalID: 0
+    vertices: []
+    indices: 
+    edges: []
+    weights: []
+    secondaryTextures: []
+    nameFileIdTable:
+      SlimWall_0: -2068724417
+      SlimWall_1: -295507349
+      SlimWall_10: -458141166
+      SlimWall_2: -1337152684
+      SlimWall_3: -1139961368
+      SlimWall_4: -845742708
+      SlimWall_5: 720385340
+      SlimWall_6: 703076584
+      SlimWall_7: -1865667509
+      SlimWall_8: 1945731103
+      SlimWall_9: -1239389531
+  mipmapLimitGroupName: 
+  pSDRemoveMatte: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
