@@ -10,4 +10,6 @@ public interface IGridQuery
     bool CanMove(Vector2Int from, Vector2Int dir);
     List<Vector2Int> GetNeighbors(Vector2Int pos);
     Vector2Int GetRandomWalkableTile();
+
+    bool IsHardBlocked(Vector2Int pos);
 }

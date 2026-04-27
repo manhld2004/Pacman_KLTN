@@ -119,6 +119,28 @@ public class GridManager : MonoBehaviour
         return true;
     }
 
+    public bool IsHardBlocked(Vector2Int logicPos)
+    {
+        if (logicPos.x < 0 || logicPos.y < 0 ||
+            logicPos.x >= GridSize.x || logicPos.y >= GridSize.y)
+            return true;
+
+        Vector3Int cell = LogicToCell(logicPos);
+
+        // không có ground coi như block cứng
+        if (!groundTilemap.HasTile(cell))
+            return true;
+
+        if (wallTilemap != null && wallTilemap.HasTile(cell))
+        {
+            WallTile wall = GetWallTile(cell);
+            if (wall != null && wall.isBlock)
+                return true;
+        }
+
+        return false;
+    }
+
     public List<Vector2Int> GetNeighbors(Vector2Int pos)
     {
         List<Vector2Int> result = new List<Vector2Int>();

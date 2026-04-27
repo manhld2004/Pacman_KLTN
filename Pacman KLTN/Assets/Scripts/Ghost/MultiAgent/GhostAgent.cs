@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using Unity.VisualScripting;
 using UnityEngine;
 
 [System.Serializable]
@@ -5,11 +7,9 @@ public class GhostAgent
 {
     public Region region;
 
-    public void UpdateSharedState(SharedWorldState worldState, Vector2Int logicPos)
-    {
-        worldState.MarkVisited(logicPos);
-    }
-
+    // =========================
+    // SEARCH
+    // =========================
     public bool InRegion(Vector2Int pos)
     {
         return pos.x >= region.minX && pos.x <= region.maxX;
@@ -57,10 +57,314 @@ public class GhostAgent
         int age = worldState.CurrentStep - visit;
         float dist = Vector2Int.Distance(from, to);
 
-        // ông có thể chỉnh tham số sau
         return dist - age * 2f;
     }
 
+    // =========================
+    // SHARED MEMORY
+    // =========================
+    public void UpdateSharedState(SharedWorldState worldState, Vector2Int logicPos)
+    {
+        worldState.MarkVisited(logicPos);
+    }
+
+    // =========================
+    // VISION
+    // =========================
+    public List<Vector2Int> GetVisibleCells(
+        Vector2Int origin,
+        IGridQuery grid,
+        int visionRadius)
+    {
+        List<Vector2Int> visible = new List<Vector2Int>();
+
+        int minX = Mathf.Max(0, origin.x - visionRadius);
+        int maxX = Mathf.Min(grid.Width - 1, origin.x + visionRadius);
+        int minY = Mathf.Max(0, origin.y - visionRadius);
+        int maxY = Mathf.Min(grid.Height - 1, origin.y + visionRadius);
+
+        for (int x = minX; x <= maxX; x++)
+        {
+            for (int y = minY; y <= maxY; y++)
+            {
+                Vector2Int target = new Vector2Int(x, y);
+
+                int dx = target.x - origin.x;
+                int dy = target.y - origin.y;
+
+                if (dx * dx + dy * dy > visionRadius * visionRadius)
+                    continue;
+
+                if (HasLineVision(origin, target, grid))
+                    visible.Add(target);
+            }
+        }
+
+        return visible;
+    }
+
+    public void UpdateVision(
+        SharedWorldState worldState,
+        Vector2Int origin,
+        IGridQuery grid,
+        int visionRadius)
+    {
+        List<Vector2Int> visibleCells = GetVisibleCells(origin, grid, visionRadius);
+
+        foreach (var target in visibleCells)
+        {
+            worldState.MarkVisited(target);
+        }
+    }
+
+    public bool UpdateVisionAndDetectPacman(
+        SharedWorldState worldState,
+        Vector2Int origin,
+        Vector2Int pacmanPos,
+        IGridQuery grid,
+        int visionRadius)
+    {
+        bool detected = false;
+
+        List<Vector2Int> visibleCells = GetVisibleCells(origin, grid, visionRadius);
+
+        foreach (var target in visibleCells)
+        {
+            worldState.MarkVisited(target);
+
+            if (target == pacmanPos)
+                detected = true;
+        }
+
+        if (detected)
+            worldState.UpdatePacmanLastKnown(pacmanPos);
+
+        return detected;
+    }
+
+    public Vector2Int FindCaptureTarget(
+        Vector2Int logicPos,
+        SharedWorldState worldState,
+        IGridQuery grid,
+        int ghostId,
+        int ghostCount)
+    {
+        Vector2Int pivot = worldState.pacmanLastKnownPosition ?? logicPos;
+        List<Vector2Int> anchors = BuildCaptureAnchors(pivot, ghostCount);
+
+        if (anchors.Count == 0)
+            return pivot;
+
+        int preferredIndex = Mathf.Abs(ghostId) % anchors.Count;
+
+        for (int offset = 0; offset < anchors.Count; offset++)
+        {
+            Vector2Int candidate = anchors[(preferredIndex + offset) % anchors.Count];
+
+            if (!grid.IsWalkable(candidate))
+                continue;
+
+            if (worldState.reservedTargets.TryGetValue(candidate, out int reservedBy) && reservedBy != ghostId)
+                continue;
+
+            return candidate;
+        }
+
+        return FindNearestCaptureTile(logicPos, pivot, grid);
+    }
+
+    private List<Vector2Int> BuildCaptureAnchors(Vector2Int pivot, int ghostCount)
+    {
+        List<Vector2Int> anchors = new List<Vector2Int>();
+
+        Vector2Int[] offsets =
+        {
+            Vector2Int.up,
+            Vector2Int.right,
+            Vector2Int.down,
+            Vector2Int.left,
+            Vector2Int.up + Vector2Int.right,
+            Vector2Int.right + Vector2Int.down,
+            Vector2Int.down + Vector2Int.left,
+            Vector2Int.left + Vector2Int.up,
+            Vector2Int.up * 2,
+            Vector2Int.right * 2,
+            Vector2Int.down * 2,
+            Vector2Int.left * 2
+        };
+
+        int limit = ghostCount <= 0 ? offsets.Length : Mathf.Min(offsets.Length, ghostCount * 3);
+
+        for (int i = 0; i < limit; i++)
+            anchors.Add(pivot + offsets[i]);
+
+        if (anchors.Count == 0)
+            anchors.Add(pivot);
+
+        return anchors;
+    }
+
+    private Vector2Int FindNearestCaptureTile(
+        Vector2Int from,
+        Vector2Int pivot,
+        IGridQuery grid)
+    {
+        Vector2Int best = pivot;
+        float bestScore = float.MaxValue;
+
+        for (int radius = 0; radius <= 2; radius++)
+        {
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                for (int dy = -radius; dy <= radius; dy++)
+                {
+                    Vector2Int candidate = new Vector2Int(pivot.x + dx, pivot.y + dy);
+
+                    if (!grid.IsWalkable(candidate))
+                        continue;
+
+                    float score = Vector2Int.Distance(from, candidate) + Vector2Int.Distance(candidate, pivot) * 0.5f;
+
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        best = candidate;
+                    }
+                }
+            }
+        }
+
+        return best;
+    }
+
+    public bool HasLineVision(
+        Vector2Int from,
+        Vector2Int to,
+        IGridQuery grid)
+    {
+        List<Vector2Int> cells = GetSupercoverCells(from, to);
+
+        if (cells == null || cells.Count == 0)
+            return false;
+
+        // kiểm tra tile block cứng
+        for (int i = 0; i < cells.Count; i++)
+        {
+            Vector2Int cell = cells[i];
+
+            // cho phép ô đầu và ô cuối là walkable bình thường,
+            // nhưng nếu giữa đường có hard block thì chặn ngay
+            if (cell != from && cell != to && grid.IsHardBlocked(cell))
+                return false;
+        }
+
+        // kiểm tra border bị chặn giữa các cell liên tiếp
+        for (int i = 0; i < cells.Count - 1; i++)
+        {
+            Vector2Int a = cells[i];
+            Vector2Int b = cells[i + 1];
+
+            if (IsTransitionBlocked(a, b, grid))
+                return false;
+        }
+
+        return true;
+    }
+
+    private bool IsTransitionBlocked(
+        Vector2Int a,
+        Vector2Int b,
+        IGridQuery grid)
+    {
+        Vector2Int delta = b - a;
+
+        // bước thẳng
+        if (Mathf.Abs(delta.x) + Mathf.Abs(delta.y) == 1)
+        {
+            return !grid.CanMove(a, delta);
+        }
+
+        // bước chéo
+        if (Mathf.Abs(delta.x) == 1 && Mathf.Abs(delta.y) == 1)
+        {
+            Vector2Int stepX = new Vector2Int(delta.x, 0);
+            Vector2Int stepY = new Vector2Int(0, delta.y);
+
+            bool path1 =
+                grid.CanMove(a, stepX) &&
+                grid.CanMove(a + stepX, stepY);
+
+            bool path2 =
+                grid.CanMove(a, stepY) &&
+                grid.CanMove(a + stepY, stepX);
+
+            return !path1 && !path2;
+        }
+
+        // không hợp lệ
+        return true;
+    }
+
+    private List<Vector2Int> GetSupercoverCells(Vector2Int from, Vector2Int to)
+    {
+        List<Vector2Int> result = new List<Vector2Int>();
+
+        int x0 = from.x;
+        int y0 = from.y;
+        int x1 = to.x;
+        int y1 = to.y;
+
+        int dx = x1 - x0;
+        int dy = y1 - y0;
+
+        int nx = Mathf.Abs(dx);
+        int ny = Mathf.Abs(dy);
+
+        int signX = dx == 0 ? 0 : (dx > 0 ? 1 : -1);
+        int signY = dy == 0 ? 0 : (dy > 0 ? 1 : -1);
+
+        int x = x0;
+        int y = y0;
+
+        result.Add(new Vector2Int(x, y));
+
+        int ix = 0;
+        int iy = 0;
+
+        while (ix < nx || iy < ny)
+        {
+            float tx = nx == 0 ? float.PositiveInfinity : (0.5f + ix) / nx;
+            float ty = ny == 0 ? float.PositiveInfinity : (0.5f + iy) / ny;
+
+            if (tx < ty)
+            {
+                x += signX;
+                ix++;
+            }
+            else if (ty < tx)
+            {
+                y += signY;
+                iy++;
+            }
+            else
+            {
+                x += signX;
+                y += signY;
+                ix++;
+                iy++;
+            }
+
+            Vector2Int p = new Vector2Int(x, y);
+            if (!result.Contains(p))
+                result.Add(p);
+        }
+
+        return result;
+    }
+
+    // =========================
+    // CLASSIC TARGET
+    // =========================
     public Vector2Int GetTargetByMode(
         GhostMode mode,
         Vector2Int logicPos,

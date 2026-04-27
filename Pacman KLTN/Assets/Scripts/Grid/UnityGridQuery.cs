@@ -25,4 +25,9 @@ public class UnityGridQuery : IGridQuery
     {
         return GridManager.Instance.GetRandomWalkableTile();
     }
+
+    public bool IsHardBlocked(Vector2Int pos)
+    {
+        return GridManager.Instance.IsHardBlocked(pos);
+    }
 }

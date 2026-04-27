@@ -9,6 +9,12 @@ public enum GhostMode
     Support
 }
 
+public enum GhostTeamPhase
+{
+    Search,
+    Capture
+}
+
 [RequireComponent(typeof(GhostMovement))]
 public class GhostAI : MonoBehaviour
 {
@@ -28,6 +34,9 @@ public class GhostAI : MonoBehaviour
     [Header("Search Region")]
     public Region region;
 
+    [Header("Multi-Agent Phase")]
+    public GhostTeamPhase teamPhase = GhostTeamPhase.Search;
+
     [Header("Pathfinding")]
     public float repathInterval = 0.5f;
 
@@ -39,6 +48,8 @@ public class GhostAI : MonoBehaviour
     private GhostMovement movement;
     private IGridQuery gridQuery;
     private GhostAgent agent;
+
+    [SerializeField] private int visionRadius = 5;
 
     private List<Vector2Int> currentPath;
     private float repathTimer;
@@ -61,7 +72,7 @@ public class GhostAI : MonoBehaviour
 
     void Start()
     {
-        SearchMode();
+        EnterSearchPhase();
     }
 
     // =========================
@@ -69,6 +80,9 @@ public class GhostAI : MonoBehaviour
     // =========================
     public void SearchMode()
     {
+        if (teamPhase != GhostTeamPhase.Search)
+            return;
+
         SharedWorldState worldState = GhostManager.Instance.worldState;
 
         ClearOldTarget(currentTarget, worldState);
@@ -88,13 +102,105 @@ public class GhostAI : MonoBehaviour
             movement.SetPath(
                 path,
                 1,
-                () => SearchMode(),
-                () => agent.UpdateSharedState(worldState, movement.LogicPos)
+                () => ReplanCurrentPhase(),
+                () =>
+                {
+                    worldState.UpdateGhost(ID, movement.LogicPos);
+
+                    bool detected = agent.UpdateVisionAndDetectPacman(
+                        worldState,
+                        movement.LogicPos,
+                        PlayStateManager.Instance.Pacman.LogicPos,
+                        gridQuery,
+                        visionRadius
+                    );
+
+                    if (detected)
+                    {
+                        Debug.Log($"Ghost {ID} detected Pacman at {PlayStateManager.Instance.Pacman.LogicPos}");
+                        EnterCapturePhase(PlayStateManager.Instance.Pacman.LogicPos);
+                    }
+                }
             );
 
             if (visualizer != null)
                 visualizer.DrawPath(path);
         }
+    }
+
+    public void EnterSearchPhase()
+    {
+        teamPhase = GhostTeamPhase.Search;
+        SearchMode();
+    }
+
+    public void EnterCapturePhase(Vector2Int pacmanPos)
+    {
+        SharedWorldState worldState = GhostManager.Instance.worldState;
+
+        teamPhase = GhostTeamPhase.Capture;
+        worldState.UpdatePacmanLastKnown(pacmanPos);
+
+        ClearOldTarget(currentTarget, worldState);
+    }
+
+    void CaptureMode()
+    {
+        if (teamPhase != GhostTeamPhase.Capture)
+            return;
+
+        SharedWorldState worldState = GhostManager.Instance.worldState;
+
+        ClearOldTarget(currentTarget, worldState);
+
+        currentTarget = agent.FindCaptureTarget(
+            GridPosition,
+            worldState,
+            gridQuery,
+            ID,
+            GhostManager.Instance.ghosts.Count
+        );
+
+        ReserveTarget(currentTarget, worldState);
+
+        var path = AStarPathfinder.FindPath(GridPosition, currentTarget);
+
+        if (path != null && path.Count > 1)
+        {
+            movement.SetPath(
+                path,
+                1,
+                () => ReplanCurrentPhase(),
+                () =>
+                {
+                    worldState.UpdateGhost(ID, movement.LogicPos);
+
+                    bool detected = agent.UpdateVisionAndDetectPacman(
+                        worldState,
+                        movement.LogicPos,
+                        PlayStateManager.Instance.Pacman.LogicPos,
+                        gridQuery,
+                        visionRadius
+                    );
+
+                    if (detected)
+                    {
+                        worldState.UpdatePacmanLastKnown(PlayStateManager.Instance.Pacman.LogicPos);
+                    }
+                }
+            );
+
+            if (visualizer != null)
+                visualizer.DrawPath(path);
+        }
+    }
+
+    void ReplanCurrentPhase()
+    {
+        if (teamPhase == GhostTeamPhase.Capture)
+            CaptureMode();
+        else
+            SearchMode();
     }
 
     public void ClearOldTarget(Vector2Int target, SharedWorldState worldState)

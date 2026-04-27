@@ -3,9 +3,16 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using UnityEngine.Tilemaps;
 
 public class GhostSimulationRunner : MonoBehaviour
 {
+    public enum MapSourceMode
+    {
+        Procedural,
+        Tilemap
+    }
+
     [Header("Run")]
     public bool runOnStart = true;
     public int episodeCount = 20;
@@ -17,10 +24,18 @@ public class GhostSimulationRunner : MonoBehaviour
     public string csvFileName = "ghost_simulation_results.csv";
 
     [Header("Map")]
+    public MapSourceMode mapSourceMode = MapSourceMode.Tilemap;
     public int width = 30;
     public int height = 20;
     [Range(0f, 0.35f)] public float wallRate = 0.10f;
     public bool generateRandomMap = true;
+
+    [Header("Tilemap Source")]
+    public GameObject tilemapPrefab;
+    public Tilemap groundTilemapSource;
+    public Tilemap wallTilemapSource;
+    public string groundTilemapName = "Ground";
+    public string wallTilemapName = "Wall";
 
     [Header("Agents")]
     public int ghostCount = 3;
@@ -106,7 +121,7 @@ public class GhostSimulationRunner : MonoBehaviour
         for (int step = 1; step <= maxStepsPerEpisode; step++)
         {
             state.currentStep = step;
-            state.worldState.SetStep(step);
+            state.worldState.UpdateStepTick();
             state.worldState.reservedTargets.Clear();
 
             // 1. Pacman move
@@ -115,13 +130,20 @@ public class GhostSimulationRunner : MonoBehaviour
             // 2. Ghost move
             foreach (var ghost in state.ghosts)
             {
-                bool detected = Manhattan(ghost.pos, state.pacmanPos) <= visionRange;
+                bool detected = ghost.Step(state, distanceWeight, ageWeight, useXPartition, visionRange);
+
                 if (detected && metrics.detectStep < 0)
+                {
                     metrics.detectStep = step;
+                    if (metrics.capturePhaseStartStep < 0)
+                        metrics.capturePhaseStartStep = step;
+                }
 
-                ghost.Step(state, distanceWeight, ageWeight, useXPartition);
-
-                MarkVisited(state, ghost.pos);
+                if (detected && state.phase == GhostTeamPhase.Search)
+                {
+                    state.phase = GhostTeamPhase.Capture;
+                    state.worldState.UpdatePacmanLastKnown(state.pacmanPos);
+                }
             }
 
             // 3. Coverage metric
@@ -146,26 +168,36 @@ public class GhostSimulationRunner : MonoBehaviour
 
     SimState BuildState(System.Random rng)
     {
-        SimState state = new SimState(width, height);
+        SimState state;
 
-        if (generateRandomMap)
-            GenerateRandomMap(state, rng);
+        if (mapSourceMode == MapSourceMode.Tilemap)
+        {
+            state = BuildStateFromTilemap(rng);
+        }
         else
-            GenerateEmptyMap(state);
+        {
+            state = new SimState(width, height);
+            if (generateRandomMap)
+                GenerateRandomMap(state, rng);
+            else
+                GenerateEmptyMap(state);
 
-        EnsureConnectivity(state, rng);
+            EnsureConnectivity(state, rng);
+        }
+
+        state.phase = GhostTeamPhase.Search;
 
         // world state
-        state.worldState.Initialize(width, height);
+        state.worldState.Initialize(state.width, state.height);
 
         // pacman
         state.pacmanPos = GetRandomWalkable(state, rng);
 
         // visit arrays
-        state.visitCount = new int[width, height];
+        state.visitCount = new int[state.width, state.height];
 
         // zones
-        List<Region> regions = BuildRegions(width, ghostCount, partitionOverlap);
+        List<Region> regions = BuildRegions(state.width, ghostCount, partitionOverlap);
 
         // ghosts
         for (int i = 0; i < ghostCount; i++)
@@ -185,6 +217,113 @@ public class GhostSimulationRunner : MonoBehaviour
         }
 
         return state;
+    }
+
+    SimState BuildStateFromTilemap(System.Random rng)
+    {
+        Tilemap groundTilemap;
+        Tilemap wallTilemap;
+        GameObject spawnedRoot = null;
+
+        if (!ResolveTilemapSources(out groundTilemap, out wallTilemap, out spawnedRoot))
+        {
+            Debug.LogError("Simulation tilemap source is missing. Falling back to procedural map.");
+            SimState fallback = new SimState(width, height);
+            if (generateRandomMap)
+                GenerateRandomMap(fallback, rng);
+            else
+                GenerateEmptyMap(fallback);
+
+            EnsureConnectivity(fallback, rng);
+            return fallback;
+        }
+
+        groundTilemap.CompressBounds();
+        BoundsInt bounds = groundTilemap.cellBounds;
+        Vector3Int origin = bounds.min;
+
+        SimState state = new SimState(bounds.size.x, bounds.size.y);
+
+        for (int x = 0; x < state.width; x++)
+        {
+            for (int y = 0; y < state.height; y++)
+            {
+                Vector3Int cell = new Vector3Int(origin.x + x, origin.y + y, 0);
+                bool hasGround = groundTilemap.HasTile(cell);
+
+                WallTile wallTile = null;
+                if (wallTilemap != null && wallTilemap.HasTile(cell))
+                    wallTile = wallTilemap.GetTile(cell) as WallTile;
+
+                bool hardBlock = !hasGround || (wallTile != null && wallTile.isBlock);
+
+                state.walkable[x, y] = !hardBlock;
+                state.wallCells[x, y] = new SimWallCell
+                {
+                    isBlock = wallTile != null && wallTile.isBlock,
+                    bTop = wallTile != null && wallTile.bTop,
+                    bBottom = wallTile != null && wallTile.bBottom,
+                    bLeft = wallTile != null && wallTile.bLeft,
+                    bRight = wallTile != null && wallTile.bRight
+                };
+            }
+        }
+
+        if (spawnedRoot != null)
+            Destroy(spawnedRoot);
+
+        return state;
+    }
+
+    bool ResolveTilemapSources(
+        out Tilemap groundTilemap,
+        out Tilemap wallTilemap,
+        out GameObject spawnedRoot)
+    {
+        groundTilemap = groundTilemapSource;
+        wallTilemap = wallTilemapSource;
+        spawnedRoot = null;
+
+        if (groundTilemap != null)
+            return true;
+
+        if (tilemapPrefab == null)
+            return false;
+
+        spawnedRoot = Instantiate(tilemapPrefab);
+        Tilemap[] tilemaps = spawnedRoot.GetComponentsInChildren<Tilemap>(true);
+
+        if (tilemaps == null || tilemaps.Length == 0)
+            return false;
+
+        groundTilemap = FindTilemapByName(tilemaps, groundTilemapName);
+        wallTilemap = FindTilemapByName(tilemaps, wallTilemapName);
+
+        if (groundTilemap == null)
+            groundTilemap = tilemaps[0];
+
+        return groundTilemap != null;
+    }
+
+    Tilemap FindTilemapByName(Tilemap[] tilemaps, string nameHint)
+    {
+        if (tilemaps == null || tilemaps.Length == 0)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(nameHint))
+            return null;
+
+        for (int i = 0; i < tilemaps.Length; i++)
+        {
+            Tilemap tilemap = tilemaps[i];
+            if (tilemap != null &&
+                tilemap.gameObject.name.Equals(nameHint, StringComparison.OrdinalIgnoreCase))
+            {
+                return tilemap;
+            }
+        }
+
+        return null;
     }
 
     void GenerateEmptyMap(SimState state)
@@ -434,11 +573,14 @@ public class GhostSimulationRunner : MonoBehaviour
         public int width;
         public int height;
         public bool[,] walkable;
+        public SimWallCell[,] wallCells;
         public SimGridQuery grid;
 
         public SharedWorldState worldState;
         public Vector2Int pacmanPos;
         public List<SimGhost> ghosts = new List<SimGhost>();
+
+        public GhostTeamPhase phase = GhostTeamPhase.Search;
 
         public int[,] visitCount;
         public int currentStep;
@@ -448,7 +590,8 @@ public class GhostSimulationRunner : MonoBehaviour
             this.width = width;
             this.height = height;
             this.walkable = new bool[width, height];
-            this.grid = new SimGridQuery(this.walkable);
+            this.wallCells = new SimWallCell[width, height];
+            this.grid = new SimGridQuery(this.walkable, this.wallCells);
         }
     }
 
@@ -460,11 +603,13 @@ public class GhostSimulationRunner : MonoBehaviour
         public Vector2Int currentTarget;
         public GhostAgent logic;
 
-        public void Step(SimState state, float distanceWeight, float ageWeight, bool useRegion)
+        public bool Step(SimState state, float distanceWeight, float ageWeight, bool useRegion, int visionRange)
         {
             ClearOldTarget(state.worldState);
 
-            currentTarget = FindBestTargetLocal(state, distanceWeight, ageWeight, useRegion);
+            currentTarget = state.phase == GhostTeamPhase.Capture
+                ? logic.FindCaptureTarget(pos, state.worldState, state.grid, id, state.ghosts.Count)
+                : FindBestTargetLocal(state, distanceWeight, ageWeight, useRegion);
 
             ReserveTarget(state.worldState);
 
@@ -475,6 +620,16 @@ public class GhostSimulationRunner : MonoBehaviour
                 pos = path[1];
                 logic.UpdateSharedState(state.worldState, pos);
             }
+
+            List<Vector2Int> visibleCells = logic.GetVisibleCells(pos, state.grid, visionRange);
+            MarkVisibleCells(state, visibleCells);
+
+            bool detected = visibleCells.Contains(state.pacmanPos);
+
+            if (detected)
+                state.worldState.UpdatePacmanLastKnown(state.pacmanPos);
+
+            return detected;
         }
 
         Vector2Int FindBestTargetLocal(SimState state, float distanceWeight, float ageWeight, bool useRegion)
@@ -528,6 +683,18 @@ public class GhostSimulationRunner : MonoBehaviour
             if (!worldState.reservedTargets.ContainsKey(currentTarget))
                 worldState.reservedTargets[currentTarget] = id;
         }
+
+        void MarkVisibleCells(SimState state, List<Vector2Int> visibleCells)
+        {
+            foreach (var cell in visibleCells)
+            {
+                if (!state.worldState.IsInside(cell))
+                    continue;
+
+                state.worldState.MarkVisited(cell);
+                state.visitCount[cell.x, cell.y] += 1;
+            }
+        }
     }
 
     [Serializable]
@@ -536,6 +703,7 @@ public class GhostSimulationRunner : MonoBehaviour
         public int seed;
         public bool captured = false;
         public int detectStep = -1;
+        public int capturePhaseStartStep = -1;
         public int captureStep = -1;
         public int firstFullCoverageStep = -1;
         public float finalCoverageRatio = 0f;
@@ -620,12 +788,12 @@ public class GhostSimulationRunner : MonoBehaviour
         public string ToCsv()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("seed,captured,detectStep,captureStep,firstFullCoverageStep,finalCoverageRatio,maxCellAge,avgCellAge,meanRevisitInterval,totalSteps");
+            sb.AppendLine("seed,captured,detectStep,capturePhaseStartStep,captureStep,firstFullCoverageStep,finalCoverageRatio,maxCellAge,avgCellAge,meanRevisitInterval,totalSteps");
 
             foreach (var r in results)
             {
                 sb.AppendLine(
-                    $"{r.seed},{r.captured},{r.detectStep},{r.captureStep},{r.firstFullCoverageStep}," +
+                    $"{r.seed},{r.captured},{r.detectStep},{r.capturePhaseStartStep},{r.captureStep},{r.firstFullCoverageStep}," +
                     $"{r.finalCoverageRatio:F4},{r.maxCellAge},{r.avgCellAge:F4},{r.meanRevisitInterval:F4},{r.totalSteps}"
                 );
             }
@@ -638,17 +806,27 @@ public class GhostSimulationRunner : MonoBehaviour
 public class SimGridQuery : IGridQuery
 {
     private bool[,] walkable;
+    private SimWallCell[,] wallCells;
     private int width;
     private int height;
 
     public int Width => width;
     public int Height => height;
 
-    public SimGridQuery(bool[,] walkable)
+    public SimGridQuery(bool[,] walkable, SimWallCell[,] wallCells)
     {
         this.walkable = walkable;
+        this.wallCells = wallCells;
         this.width = walkable.GetLength(0);
         this.height = walkable.GetLength(1);
+    }
+
+    public bool IsHardBlocked(Vector2Int pos)
+    {
+        if (pos.x < 0 || pos.y < 0 || pos.x >= width || pos.y >= height)
+            return true;
+
+        return !walkable[pos.x, pos.y];
     }
 
     public bool IsWalkable(Vector2Int pos)
@@ -662,7 +840,38 @@ public class SimGridQuery : IGridQuery
     public bool CanMove(Vector2Int from, Vector2Int dir)
     {
         Vector2Int to = from + dir;
-        return IsWalkable(to);
+
+        if (!IsWalkable(from) || !IsWalkable(to))
+            return false;
+
+        SimWallCell fromWall = wallCells[from.x, from.y];
+        SimWallCell toWall = wallCells[to.x, to.y];
+
+        if (fromWall.isBlock || toWall.isBlock)
+            return false;
+
+        if (dir == Vector2Int.up)
+        {
+            if (fromWall.bTop || toWall.bBottom)
+                return false;
+        }
+        else if (dir == Vector2Int.down)
+        {
+            if (fromWall.bBottom || toWall.bTop)
+                return false;
+        }
+        else if (dir == Vector2Int.left)
+        {
+            if (fromWall.bLeft || toWall.bRight)
+                return false;
+        }
+        else if (dir == Vector2Int.right)
+        {
+            if (fromWall.bRight || toWall.bLeft)
+                return false;
+        }
+
+        return true;
     }
 
     public List<Vector2Int> GetNeighbors(Vector2Int pos)
@@ -680,7 +889,7 @@ public class SimGridQuery : IGridQuery
         foreach (var dir in dirs)
         {
             Vector2Int next = pos + dir;
-            if (IsWalkable(next))
+            if (CanMove(pos, dir))
                 result.Add(next);
         }
 
@@ -758,4 +967,13 @@ public static class SimPathfinder
         path.Reverse();
         return path;
     }
+}
+
+public struct SimWallCell
+{
+    public bool isBlock;
+    public bool bTop;
+    public bool bBottom;
+    public bool bLeft;
+    public bool bRight;
 }
