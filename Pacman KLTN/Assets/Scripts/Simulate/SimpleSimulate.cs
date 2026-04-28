@@ -7,12 +7,6 @@ using UnityEngine.Tilemaps;
 
 public class GhostSimulationRunner : MonoBehaviour
 {
-    public enum MapSourceMode
-    {
-        Procedural,
-        Tilemap
-    }
-
     [Header("Run")]
     public bool runOnStart = true;
     public int episodeCount = 20;
@@ -23,12 +17,8 @@ public class GhostSimulationRunner : MonoBehaviour
     public bool exportCsv = false;
     public string csvFileName = "ghost_simulation_results.csv";
 
-    [Header("Map")]
-    public MapSourceMode mapSourceMode = MapSourceMode.Tilemap;
-    public int width = 30;
-    public int height = 20;
-    [Range(0f, 0.35f)] public float wallRate = 0.10f;
-    public bool generateRandomMap = true;
+    [Header("Map (Gameplay Tilemap)")]
+    public bool usePrefabFallbackWhenSceneTilemapMissing = false;
 
     [Header("Tilemap Source")]
     public GameObject tilemapPrefab;
@@ -43,12 +33,19 @@ public class GhostSimulationRunner : MonoBehaviour
     public bool useXPartition = true;
     public int partitionOverlap = 1;
 
+    [Header("Capture Recovery")]
+    public int captureLostSightSteps = 4;
+
     [Header("Search Scoring")]
     public float distanceWeight = 1f;
     public float ageWeight = 2f;
 
     [Header("Pacman")]
     public PacmanMoveMode pacmanMoveMode = PacmanMoveMode.RandomWalk;
+
+    [Header("Scene Preset (Required)")]
+    public GameObject pacmanObject;
+    public GameObject[] ghostObjects;
 
     [Header("Log")]
     public bool logEachEpisode = true;
@@ -108,6 +105,7 @@ public class GhostSimulationRunner : MonoBehaviour
     {
         System.Random rng = new System.Random(seed);
         SimState state = BuildState(rng);
+        int captureLostSightCounter = 0;
 
         EpisodeMetrics metrics = new EpisodeMetrics
         {
@@ -116,7 +114,10 @@ public class GhostSimulationRunner : MonoBehaviour
 
         // đánh dấu tile ban đầu của ghost
         foreach (var ghost in state.ghosts)
+        {
+            state.worldState.UpdateGhost(ghost.id, ghost.pos);
             MarkVisited(state, ghost.pos);
+        }
 
         for (int step = 1; step <= maxStepsPerEpisode; step++)
         {
@@ -128,6 +129,13 @@ public class GhostSimulationRunner : MonoBehaviour
             StepPacman(state, rng);
 
             // 2. Ghost move
+            bool anyGhostDetected = false;
+
+            foreach (var ghost in state.ghosts)
+            {
+                state.worldState.UpdateGhost(ghost.id, ghost.pos);
+            }
+
             foreach (var ghost in state.ghosts)
             {
                 bool detected = ghost.Step(state, distanceWeight, ageWeight, useXPartition, visionRange);
@@ -144,16 +152,36 @@ public class GhostSimulationRunner : MonoBehaviour
                     state.phase = GhostTeamPhase.Capture;
                     state.worldState.UpdatePacmanLastKnown(state.pacmanPos);
                 }
+
+                if (detected)
+                    anyGhostDetected = true;
             }
 
-            // 3. Coverage metric
+            if (state.phase == GhostTeamPhase.Capture)
+            {
+                if (anyGhostDetected)
+                {
+                    captureLostSightCounter = 0;
+                }
+                else
+                {
+                    captureLostSightCounter++;
+
+                    if (captureLostSightCounter >= captureLostSightSteps)
+                    {
+                        state.phase = GhostTeamPhase.Search;
+                        state.worldState.ClearPacmanKnowledge();
+                        captureLostSightCounter = 0;
+                    }
+                }
+            }
+
             float coverage = CalculateCoverageRatio(state);
             metrics.finalCoverageRatio = coverage;
 
             if (metrics.firstFullCoverageStep < 0 && coverage >= 0.999f)
                 metrics.firstFullCoverageStep = step;
 
-            // 4. Capture
             if (CheckCapture(state))
             {
                 metrics.captured = true;
@@ -168,58 +196,25 @@ public class GhostSimulationRunner : MonoBehaviour
 
     SimState BuildState(System.Random rng)
     {
-        SimState state;
-
-        if (mapSourceMode == MapSourceMode.Tilemap)
-        {
-            state = BuildStateFromTilemap(rng);
-        }
-        else
-        {
-            state = new SimState(width, height);
-            if (generateRandomMap)
-                GenerateRandomMap(state, rng);
-            else
-                GenerateEmptyMap(state);
-
-            EnsureConnectivity(state, rng);
-        }
+        SimState state = BuildStateFromTilemap();
+        if (state == null)
+            throw new InvalidOperationException("Simulation requires gameplay tilemap data, but no valid tilemap source was found.");
 
         state.phase = GhostTeamPhase.Search;
 
         // world state
+        if (state.worldState == null)
+            state.worldState = new SharedWorldState();
+
         state.worldState.Initialize(state.width, state.height);
 
-        // pacman
-        state.pacmanPos = GetRandomWalkable(state, rng);
-
-        // visit arrays
+        InitializeFromScene(state, rng);
         state.visitCount = new int[state.width, state.height];
-
-        // zones
-        List<Region> regions = BuildRegions(state.width, ghostCount, partitionOverlap);
-
-        // ghosts
-        for (int i = 0; i < ghostCount; i++)
-        {
-            GhostAgent logic = new GhostAgent();
-            logic.region = regions[Mathf.Min(i, regions.Count - 1)];
-
-            SimGhost ghost = new SimGhost
-            {
-                id = i,
-                pos = GetRandomWalkableInRegion(state, logic.region, rng),
-                currentTarget = Vector2Int.one * -999,
-                logic = logic
-            };
-
-            state.ghosts.Add(ghost);
-        }
 
         return state;
     }
 
-    SimState BuildStateFromTilemap(System.Random rng)
+    SimState BuildStateFromTilemap()
     {
         Tilemap groundTilemap;
         Tilemap wallTilemap;
@@ -227,15 +222,8 @@ public class GhostSimulationRunner : MonoBehaviour
 
         if (!ResolveTilemapSources(out groundTilemap, out wallTilemap, out spawnedRoot))
         {
-            Debug.LogError("Simulation tilemap source is missing. Falling back to procedural map.");
-            SimState fallback = new SimState(width, height);
-            if (generateRandomMap)
-                GenerateRandomMap(fallback, rng);
-            else
-                GenerateEmptyMap(fallback);
-
-            EnsureConnectivity(fallback, rng);
-            return fallback;
+            Debug.LogError("Simulation tilemap source is missing. Please assign scene tilemaps (Ground/Wall) like gameplay.");
+            return null;
         }
 
         groundTilemap.CompressBounds();
@@ -243,6 +231,7 @@ public class GhostSimulationRunner : MonoBehaviour
         Vector3Int origin = bounds.min;
 
         SimState state = new SimState(bounds.size.x, bounds.size.y);
+        state.tilemapOrigin = origin;  // Store origin for later coordinate conversion
 
         for (int x = 0; x < state.width; x++)
         {
@@ -287,7 +276,20 @@ public class GhostSimulationRunner : MonoBehaviour
         if (groundTilemap != null)
             return true;
 
-        if (tilemapPrefab == null)
+        Tilemap[] sceneTilemaps = FindObjectsOfType<Tilemap>(true);
+        if (sceneTilemaps != null && sceneTilemaps.Length > 0)
+        {
+            groundTilemap = FindTilemapByName(sceneTilemaps, groundTilemapName);
+            wallTilemap = FindTilemapByName(sceneTilemaps, wallTilemapName);
+
+            if (groundTilemap == null)
+                groundTilemap = sceneTilemaps[0];
+
+            if (groundTilemap != null)
+                return true;
+        }
+
+        if (!usePrefabFallbackWhenSceneTilemapMissing || tilemapPrefab == null)
             return false;
 
         spawnedRoot = Instantiate(tilemapPrefab);
@@ -324,74 +326,6 @@ public class GhostSimulationRunner : MonoBehaviour
         }
 
         return null;
-    }
-
-    void GenerateEmptyMap(SimState state)
-    {
-        for (int x = 0; x < state.width; x++)
-        for (int y = 0; y < state.height; y++)
-            state.walkable[x, y] = true;
-    }
-
-    void GenerateRandomMap(SimState state, System.Random rng)
-    {
-        for (int x = 0; x < state.width; x++)
-        {
-            for (int y = 0; y < state.height; y++)
-            {
-                bool border = (x == 0 || y == 0 || x == state.width - 1 || y == state.height - 1);
-
-                if (border)
-                {
-                    state.walkable[x, y] = false;
-                }
-                else
-                {
-                    state.walkable[x, y] = rng.NextDouble() > wallRate;
-                }
-            }
-        }
-    }
-
-    void EnsureConnectivity(SimState state, System.Random rng)
-    {
-        Vector2Int start = GetRandomWalkable(state, rng);
-        HashSet<Vector2Int> reachable = FloodFill(state, start);
-
-        for (int x = 0; x < state.width; x++)
-        {
-            for (int y = 0; y < state.height; y++)
-            {
-                Vector2Int p = new Vector2Int(x, y);
-                if (state.walkable[x, y] && !reachable.Contains(p))
-                    state.walkable[x, y] = false;
-            }
-        }
-    }
-
-    HashSet<Vector2Int> FloodFill(SimState state, Vector2Int start)
-    {
-        Queue<Vector2Int> q = new Queue<Vector2Int>();
-        HashSet<Vector2Int> visited = new HashSet<Vector2Int>();
-
-        q.Enqueue(start);
-        visited.Add(start);
-
-        while (q.Count > 0)
-        {
-            Vector2Int cur = q.Dequeue();
-
-            foreach (var n in state.grid.GetNeighbors(cur))
-            {
-                if (!visited.Contains(n))
-                {
-                    visited.Add(n);
-                    q.Enqueue(n);
-                }
-            }
-        }
-
-        return visited;
     }
 
     void StepPacman(SimState state, System.Random rng)
@@ -531,6 +465,90 @@ public class GhostSimulationRunner : MonoBehaviour
         return result;
     }
 
+    void InitializeFromScene(SimState state, System.Random rng)
+    {
+        // Get tilemap for coordinate conversion
+        Tilemap groundTilemap = groundTilemapSource;
+        if (groundTilemap == null && tilemapPrefab != null)
+        {
+            Tilemap[] tilemaps = tilemapPrefab.GetComponentsInChildren<Tilemap>(true);
+            groundTilemap = FindTilemapByName(tilemaps, groundTilemapName);
+            if (groundTilemap == null && tilemaps.Length > 0)
+                groundTilemap = tilemaps[0];
+        }
+
+        if (groundTilemap == null)
+            throw new InvalidOperationException("Cannot find groundTilemap for scene preset conversion. Required for coordinate transformation.");
+
+        // Get Pacman position from scene (mandatory)
+        if (pacmanObject == null)
+            throw new InvalidOperationException("Pacman object not assigned. Scene preset requires pacmanObject to be set.");
+
+        Vector2Int pacmanLogicPos = WorldToLogic(pacmanObject.transform.position, groundTilemap, state);
+        if (!state.IsWalkable(pacmanLogicPos))
+            throw new InvalidOperationException($"Pacman position {pacmanLogicPos} (world: {pacmanObject.transform.position}) is not walkable. Please place Pacman on a valid walkable tile.");
+
+        state.pacmanPos = pacmanLogicPos;
+        Debug.Log($"[SCENE] Pacman loaded at logic pos: {pacmanLogicPos} (world: {pacmanObject.transform.position})");
+
+        // Get Ghost positions from scene (mandatory)
+        if (ghostObjects == null || ghostObjects.Length == 0)
+            throw new InvalidOperationException($"Ghost objects array is empty. Scene preset requires {ghostCount} ghosts to be assigned.");
+
+        List<Region> ghostRegions = BuildRegions(state.width, ghostCount, partitionOverlap);
+        int ghostIndex = 0;
+
+        foreach (GameObject ghostObj in ghostObjects)
+        {
+            if (ghostIndex >= ghostCount)
+                break;
+
+            if (ghostObj == null)
+                throw new InvalidOperationException($"Ghost object at index {ghostIndex} is null. All ghost slots must be filled.");
+
+            Vector2Int ghostLogicPos = WorldToLogic(ghostObj.transform.position, groundTilemap, state);
+            if (!state.IsWalkable(ghostLogicPos))
+                throw new InvalidOperationException($"Ghost {ghostIndex} position {ghostLogicPos} (world: {ghostObj.transform.position}) is not walkable. Please place all ghosts on valid walkable tiles.");
+
+            GhostAgent logic = new GhostAgent();
+            logic.region = ghostRegions[Mathf.Min(ghostIndex, ghostRegions.Count - 1)];
+
+            SimGhost ghost = new SimGhost
+            {
+                id = ghostIndex,
+                pos = ghostLogicPos,
+                currentTarget = Vector2Int.one * -999,
+                logic = logic
+            };
+
+            state.ghosts.Add(ghost);
+            Debug.Log($"[SCENE] Ghost {ghostIndex} loaded at logic pos: {ghostLogicPos} (world: {ghostObj.transform.position})");
+            ghostIndex++;
+        }
+
+        if (ghostIndex < ghostCount)
+            throw new InvalidOperationException($"Not enough ghost objects assigned. Expected {ghostCount}, but got {ghostIndex}.");
+
+        Debug.Log($"[SCENE PRESET] Episode initialized - Pacman at {state.pacmanPos}, {state.ghosts.Count} ghosts at scene positions.");
+    }
+
+    Vector2Int WorldToLogic(Vector3 worldPos, Tilemap groundTilemap, SimState state)
+    {
+        // Convert world position to tilemap cell (using Unity's conversion)
+        Vector3Int cell = groundTilemap.WorldToCell(worldPos);
+
+        // Use the stored origin (same as GridManager uses)
+        Vector3Int origin = state.tilemapOrigin;
+
+        // Convert cell to logic position (exactly like GridManager.CellToLogic)
+        Vector2Int logicPos = new Vector2Int(
+            cell.x - origin.x,
+            cell.y - origin.y
+        );
+
+        return logicPos;
+    }
+
     Vector2Int GetRandomWalkable(SimState state, System.Random rng)
     {
         for (int i = 0; i < 1000; i++)
@@ -584,6 +602,9 @@ public class GhostSimulationRunner : MonoBehaviour
 
         public int[,] visitCount;
         public int currentStep;
+        
+        // Tilemap origin for coordinate conversion (same as GridManager)
+        public Vector3Int tilemapOrigin = Vector3Int.zero;
 
         public SimState(int width, int height)
         {
@@ -592,6 +613,14 @@ public class GhostSimulationRunner : MonoBehaviour
             this.walkable = new bool[width, height];
             this.wallCells = new SimWallCell[width, height];
             this.grid = new SimGridQuery(this.walkable, this.wallCells);
+            this.worldState = new SharedWorldState();
+        }
+
+        public bool IsWalkable(Vector2Int pos)
+        {
+            if (pos.x < 0 || pos.y < 0 || pos.x >= width || pos.y >= height)
+                return false;
+            return walkable[pos.x, pos.y];
         }
     }
 
@@ -607,6 +636,8 @@ public class GhostSimulationRunner : MonoBehaviour
         {
             ClearOldTarget(state.worldState);
 
+            state.worldState.UpdateGhost(id, pos);
+
             currentTarget = state.phase == GhostTeamPhase.Capture
                 ? logic.FindCaptureTarget(pos, state.worldState, state.grid, id, state.ghosts.Count)
                 : FindBestTargetLocal(state, distanceWeight, ageWeight, useRegion);
@@ -618,6 +649,7 @@ public class GhostSimulationRunner : MonoBehaviour
             if (path != null && path.Count > 1)
             {
                 pos = path[1];
+                state.worldState.UpdateGhost(id, pos);
                 logic.UpdateSharedState(state.worldState, pos);
             }
 

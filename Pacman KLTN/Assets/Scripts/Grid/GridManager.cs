@@ -48,18 +48,15 @@ public class GridManager : MonoBehaviour
 
     public bool IsWalkable(Vector2Int logicPos)
     {
-        // Ngoài map logic
         if (logicPos.x < 0 || logicPos.y < 0 ||
             logicPos.x >= GridSize.x || logicPos.y >= GridSize.y)
             return false;
 
         Vector3Int cell = LogicToCell(logicPos);
 
-        // Không có ground → không đi được
         if (!groundTilemap.HasTile(cell))
             return false;
 
-        // Có wall → chặn
         if (wallTilemap != null && wallTilemap.HasTile(cell) && GetWallTile(cell).isBlock)
             return false;
 
@@ -70,7 +67,6 @@ public class GridManager : MonoBehaviour
     {
         Vector2Int to = from + dir;
 
-        // ngoài map
         if (to.x < 0 || to.y < 0 ||
             to.x >= GridSize.x || to.y >= GridSize.y)
             return false;
@@ -78,19 +74,16 @@ public class GridManager : MonoBehaviour
         Vector3Int fromCell = LogicToCell(from);
         Vector3Int toCell   = LogicToCell(to);
 
-        // không có ground ở ô đích
         if (!groundTilemap.HasTile(toCell))
             return false;
 
         WallTile fromWall = GetWallTile(fromCell);
         WallTile toWall   = GetWallTile(toCell);
 
-        // block cứng
         if ((fromWall && fromWall.isBlock) ||
             (toWall && toWall.isBlock))
             return false;
 
-        // kiểm tra edge
         if (dir == Vector2Int.up)
         {
             if ((fromWall && fromWall.bTop) ||
@@ -127,7 +120,6 @@ public class GridManager : MonoBehaviour
 
         Vector3Int cell = LogicToCell(logicPos);
 
-        // không có ground coi như block cứng
         if (!groundTilemap.HasTile(cell))
             return true;
 

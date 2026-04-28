@@ -150,6 +150,14 @@ public class GhostAgent
         int ghostCount)
     {
         Vector2Int pivot = worldState.pacmanLastKnownPosition ?? logicPos;
+
+        if (worldState.pacmanLastKnownPosition.HasValue &&
+            IsPrimaryChaser(ghostId, worldState, pivot) &&
+            grid.IsWalkable(pivot))
+        {
+            return pivot;
+        }
+
         List<Vector2Int> anchors = BuildCaptureAnchors(pivot, ghostCount);
 
         if (anchors.Count == 0)
@@ -173,12 +181,32 @@ public class GhostAgent
         return FindNearestCaptureTile(logicPos, pivot, grid);
     }
 
+    private bool IsPrimaryChaser(int ghostId, SharedWorldState worldState, Vector2Int pivot)
+    {
+        float bestDist = float.MaxValue;
+        int bestGhostId = ghostId;
+
+        foreach (var pair in worldState.ghostPositions)
+        {
+            float dist = Vector2Int.Distance(pair.Value, pivot);
+
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                bestGhostId = pair.Key;
+            }
+        }
+
+        return ghostId == bestGhostId;
+    }
+
     private List<Vector2Int> BuildCaptureAnchors(Vector2Int pivot, int ghostCount)
     {
         List<Vector2Int> anchors = new List<Vector2Int>();
 
         Vector2Int[] offsets =
         {
+            Vector2Int.zero,
             Vector2Int.up,
             Vector2Int.right,
             Vector2Int.down,
@@ -247,18 +275,14 @@ public class GhostAgent
         if (cells == null || cells.Count == 0)
             return false;
 
-        // kiểm tra tile block cứng
         for (int i = 0; i < cells.Count; i++)
         {
             Vector2Int cell = cells[i];
 
-            // cho phép ô đầu và ô cuối là walkable bình thường,
-            // nhưng nếu giữa đường có hard block thì chặn ngay
             if (cell != from && cell != to && grid.IsHardBlocked(cell))
                 return false;
         }
 
-        // kiểm tra border bị chặn giữa các cell liên tiếp
         for (int i = 0; i < cells.Count - 1; i++)
         {
             Vector2Int a = cells[i];
@@ -301,7 +325,6 @@ public class GhostAgent
             return !path1 && !path2;
         }
 
-        // không hợp lệ
         return true;
     }
 
@@ -362,9 +385,6 @@ public class GhostAgent
         return result;
     }
 
-    // =========================
-    // CLASSIC TARGET
-    // =========================
     public Vector2Int GetTargetByMode(
         GhostMode mode,
         Vector2Int logicPos,

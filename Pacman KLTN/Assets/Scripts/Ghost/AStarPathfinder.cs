@@ -78,6 +78,20 @@ public static class AStarPathfinder
 
         if (path != null)
         {
+            // DEBUG: Validate path doesn't have diagonals
+            if (path.Count > 1)
+            {
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    Vector2Int from = path[i];
+                    Vector2Int to = path[i + 1];
+                    Vector2Int step = to - from;
+                    if (step.sqrMagnitude != 1)
+                    {
+                        Debug.LogError($"[A* BUG] Generated diagonal step {i}->{i+1}: {from} -> {to} (step={step})");
+                    }
+                }
+            }
             AddToCache(key, path);
         }
 

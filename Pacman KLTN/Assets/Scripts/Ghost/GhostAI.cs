@@ -40,6 +40,9 @@ public class GhostAI : MonoBehaviour
     [Header("Pathfinding")]
     public float repathInterval = 0.5f;
 
+    [Header("Capture Recovery")]
+    [SerializeField] private int lostSightReplansBeforeSearch = 4;
+
     public int ID => id;
     public Vector2Int GridPosition => movement.LogicPos;
     public Vector2Int LogicPos => movement.LogicPos;
@@ -54,6 +57,20 @@ public class GhostAI : MonoBehaviour
     private List<Vector2Int> currentPath;
     private float repathTimer;
     private Vector2Int currentTarget;
+    private float nextCaptureRepathTime;
+    private int captureLostSightCounter;
+
+    void Update()
+    {
+        if (teamPhase == GhostTeamPhase.Capture)
+        {
+            if (movement.IsIdle && Time.time >= nextCaptureRepathTime)
+            {
+                ReplanCurrentPhase();
+                return;
+            }
+        }
+    }
 
     void Awake()
     {
@@ -118,7 +135,7 @@ public class GhostAI : MonoBehaviour
                     if (detected)
                     {
                         Debug.Log($"Ghost {ID} detected Pacman at {PlayStateManager.Instance.Pacman.LogicPos}");
-                        EnterCapturePhase(PlayStateManager.Instance.Pacman.LogicPos);
+                        GhostManager.Instance.EnterCapturePhase(PlayStateManager.Instance.Pacman.LogicPos);
                     }
                 }
             );
@@ -131,6 +148,7 @@ public class GhostAI : MonoBehaviour
     public void EnterSearchPhase()
     {
         teamPhase = GhostTeamPhase.Search;
+        captureLostSightCounter = 0;
         SearchMode();
     }
 
@@ -139,9 +157,13 @@ public class GhostAI : MonoBehaviour
         SharedWorldState worldState = GhostManager.Instance.worldState;
 
         teamPhase = GhostTeamPhase.Capture;
+        nextCaptureRepathTime = Time.time;
+        captureLostSightCounter = 0;
         worldState.UpdatePacmanLastKnown(pacmanPos);
 
         ClearOldTarget(currentTarget, worldState);
+        movement.InterruptPath();
+        ReplanCurrentPhase();
     }
 
     void CaptureMode()
@@ -185,18 +207,38 @@ public class GhostAI : MonoBehaviour
 
                     if (detected)
                     {
-                        worldState.UpdatePacmanLastKnown(PlayStateManager.Instance.Pacman.LogicPos);
+                        captureLostSightCounter = 0;
+                        GhostManager.Instance.EnterCapturePhase(PlayStateManager.Instance.Pacman.LogicPos);
+                    }
+                    else
+                    {
+                        captureLostSightCounter++;
+
+                        if (captureLostSightCounter >= lostSightReplansBeforeSearch)
+                        {
+                            GhostManager.Instance.EnterSearchPhase();
+                        }
                     }
                 }
             );
 
             if (visualizer != null)
                 visualizer.DrawPath(path);
+
+            return;
+        }
+
+        captureLostSightCounter++;
+        if (captureLostSightCounter >= lostSightReplansBeforeSearch)
+        {
+            GhostManager.Instance.EnterSearchPhase();
         }
     }
 
     void ReplanCurrentPhase()
     {
+        nextCaptureRepathTime = Time.time + repathInterval;
+
         if (teamPhase == GhostTeamPhase.Capture)
             CaptureMode();
         else
@@ -220,9 +262,6 @@ public class GhostAI : MonoBehaviour
         }
     }
 
-    // =========================
-    // CLASSIC MODE PATHING
-    // =========================
     void RecalculatePath()
     {
         Vector2Int target = agent.GetTargetByMode(
@@ -244,9 +283,6 @@ public class GhostAI : MonoBehaviour
             visualizer.DrawPath(currentPath);
     }
 
-    // =========================
-    // STATE CONTROL
-    // =========================
     public void SetMode(GhostMode newMode)
     {
         if (mode == newMode) return;

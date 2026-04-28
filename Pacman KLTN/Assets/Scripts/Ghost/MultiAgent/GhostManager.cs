@@ -29,6 +29,26 @@ public class GhostManager : MonoBehaviour
         }
     }
 
+    public void EnterCapturePhase(Vector2Int pacmanPos)
+    {
+        worldState.UpdatePacmanLastKnown(pacmanPos);
+
+        foreach (var ghost in ghosts)
+        {
+            ghost.EnterCapturePhase(pacmanPos);
+        }
+    }
+
+    public void EnterSearchPhase()
+    {
+        worldState.ClearPacmanKnowledge();
+
+        foreach (var ghost in ghosts)
+        {
+            ghost.EnterSearchPhase();
+        }
+    }
+
     // void AssignRoles()
     // {
     //     GhostAI closestGhost = null;
