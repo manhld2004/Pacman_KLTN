@@ -1,31 +1,29 @@
+﻿using UnityEngine;
+using UnityEngine.Tilemaps;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using UnityEngine;
-using UnityEngine.Tilemaps;
 
-public class GhostSimulationRunner : MonoBehaviour
+public class SimpleSimulate : MonoBehaviour
 {
-    [Header("Run")]
-    public bool runOnStart = true;
-    public int episodeCount = 20;
-    public int maxStepsPerEpisode = 3000;
-    public int randomSeed = 12345;
-
-    [Header("CSV Export")]
-    public bool exportCsv = false;
-    public string csvFileName = "ghost_simulation_results.csv";
-
-    [Header("Map (Gameplay Tilemap)")]
-    public bool usePrefabFallbackWhenSceneTilemapMissing = false;
+    [Header("Simulation")]
+    public bool runOnStart = false;
+    public int episodeCount = 10;
+    public int randomSeed = 0;
+    public int maxStepsPerEpisode = 1000;
 
     [Header("Tilemap Source")]
-    public GameObject tilemapPrefab;
     public Tilemap groundTilemapSource;
     public Tilemap wallTilemapSource;
     public string groundTilemapName = "Ground";
-    public string wallTilemapName = "Wall";
+    public string wallTilemapName = "Walls";
+    public bool usePrefabFallbackWhenSceneTilemapMissing = false;
+    public GameObject tilemapPrefab;
+
+    [Header("Export")]
+    public bool exportCsv = true;
+    public string csvFileName = "simulation_results.csv";
 
     [Header("Agents")]
     public int ghostCount = 3;
@@ -112,7 +110,7 @@ public class GhostSimulationRunner : MonoBehaviour
             seed = seed
         };
 
-        // đánh dấu tile ban đầu của ghost
+        // Ä‘Ã¡nh dáº¥u tile ban Ä‘áº§u cá»§a ghost
         foreach (var ghost in state.ghosts)
         {
             state.worldState.UpdateGhost(ghost.id, ghost.pos);
@@ -124,9 +122,28 @@ public class GhostSimulationRunner : MonoBehaviour
             state.currentStep = step;
             state.worldState.UpdateStepTick();
             state.worldState.reservedTargets.Clear();
+            
+            // CHECK CAPTURE BEFORE MOVEMENT (to ensure gap between detect and capture)
+            if (CheckCapture(state))
+            {
+                metrics.captured = true;
+                metrics.captureStep = step;
+                if (logEachEpisode && seed % 10 == 0)
+                    Debug.Log($"[Step {step}] CAPTURED! Pacman={state.pacmanPos}, Gap={metrics.gap}");
+                break;
+            }
 
-            // 1. Pacman move
+            // 1. Pacman move - STORE OLD POSITION FOR LOGGING
+            Vector2Int pacmanOldPos = state.pacmanPos;
             StepPacman(state, rng);
+            Vector2Int pacmanNewPos = state.pacmanPos;
+            
+            // DEBUG: Log first 5 steps
+            if (step <= 5 && logEachEpisode && seed % 10 == 0)
+            {
+                Debug.Log($"[Step {step}] Pacman: {pacmanOldPos}->{pacmanNewPos}, " +
+                    $"Ghost0: {state.ghosts[0].pos}");
+            }
 
             // 2. Ghost move
             bool anyGhostDetected = false;
@@ -140,11 +157,18 @@ public class GhostSimulationRunner : MonoBehaviour
             {
                 bool detected = ghost.Step(state, distanceWeight, ageWeight, useXPartition, visionRange);
 
+                // Track metrics
+                state.totalGhostMoves++;
+                state.ghostDistanceTraveled[ghost.id] += ghost.distanceThisStep;
+                if (ghost.revisitThisStep)
+                    state.totalRevisitMoves++;
+
                 if (detected && metrics.detectStep < 0)
                 {
                     metrics.detectStep = step;
                     if (metrics.capturePhaseStartStep < 0)
                         metrics.capturePhaseStartStep = step;
+                    
                 }
 
                 if (detected && state.phase == GhostTeamPhase.Search)
@@ -167,7 +191,8 @@ public class GhostSimulationRunner : MonoBehaviour
                 {
                     captureLostSightCounter++;
 
-                    if (captureLostSightCounter >= captureLostSightSteps)
+                    int failureTolerance = Mathf.Max(2, captureLostSightSteps);
+                    if (captureLostSightCounter >= failureTolerance)
                     {
                         state.phase = GhostTeamPhase.Search;
                         state.worldState.ClearPacmanKnowledge();
@@ -181,13 +206,6 @@ public class GhostSimulationRunner : MonoBehaviour
 
             if (metrics.firstFullCoverageStep < 0 && coverage >= 0.999f)
                 metrics.firstFullCoverageStep = step;
-
-            if (CheckCapture(state))
-            {
-                metrics.captured = true;
-                metrics.captureStep = step;
-                break;
-            }
         }
 
         FinalizeMetrics(state, metrics);
@@ -210,6 +228,14 @@ public class GhostSimulationRunner : MonoBehaviour
 
         InitializeFromScene(state, rng);
         state.visitCount = new int[state.width, state.height];
+        
+        // Initialize Phase 1 metrics tracking
+        state.ghostDistanceTraveled = new float[ghostCount];
+        for (int i = 0; i < ghostCount; i++)
+            state.ghostDistanceTraveled[i] = 0f;
+        state.totalGhostMoves = 0;
+        state.totalRevisitMoves = 0;
+        state.targetConflictCount = 0;
 
         return state;
     }
@@ -336,30 +362,46 @@ public class GhostSimulationRunner : MonoBehaviour
             return;
         }
 
-        // Greedy escape
+        // Greedy escape - find neighbor that maximizes distance to nearest ghost
         List<Vector2Int> neighbors = state.grid.GetNeighbors(state.pacmanPos);
         if (neighbors.Count == 0) return;
 
+        float distanceToNearestGhostNow = GetMinDistanceToAnyGhost(state, state.pacmanPos);
+        
         float bestScore = float.MinValue;
         Vector2Int best = state.pacmanPos;
 
         foreach (var n in neighbors)
         {
-            float minDist = float.MaxValue;
-            foreach (var ghost in state.ghosts)
-            {
-                float d = Manhattan(n, ghost.pos);
-                if (d < minDist) minDist = d;
-            }
-
-            if (minDist > bestScore)
+            float minDist = GetMinDistanceToAnyGhost(state, n);
+            
+            // Only move if it increases distance to nearest ghost
+            // If all moves decrease distance, stay in place
+            if (minDist >= bestScore)
             {
                 bestScore = minDist;
                 best = n;
             }
         }
+        
+        
+        if (distanceToNearestGhostNow > bestScore)
+        {
+            return;
+        }
 
         state.pacmanPos = best;
+    }
+    
+    float GetMinDistanceToAnyGhost(SimState state, Vector2Int pos)
+    {
+        float minDist = float.MaxValue;
+        foreach (var ghost in state.ghosts)
+        {
+            float d = Manhattan(pos, ghost.pos);
+            if (d < minDist) minDist = d;
+        }
+        return minDist;
     }
 
     Vector2Int RandomMove(SimState state, Vector2Int pos, System.Random rng)
@@ -439,6 +481,38 @@ public class GhostSimulationRunner : MonoBehaviour
         metrics.avgCellAge = walkableCount > 0 ? ageSum / walkableCount : 0f;
         metrics.meanRevisitInterval = revisitCount > 0 ? revisitSum / revisitCount : -1f;
         metrics.totalSteps = state.currentStep;
+        
+        // ===== PHASE 1 METRICS CALCULATION =====
+        
+        // 1. Revisit Ratio (efficiency of search)
+        metrics.revisitRatio = state.totalGhostMoves > 0 
+            ? (float)state.totalRevisitMoves / state.totalGhostMoves 
+            : 0f;
+        
+        // 2. Idleness Metrics (cell coverage quality)
+        metrics.avgIdleness = metrics.avgCellAge;
+        metrics.maxIdleness = maxAge;
+        
+        // 3. Workload Balance (ghost coordination)
+        if (state.ghostDistanceTraveled != null && state.ghostDistanceTraveled.Length > 0)
+        {
+            float avgDistance = 0f;
+            for (int i = 0; i < state.ghostDistanceTraveled.Length; i++)
+                avgDistance += state.ghostDistanceTraveled[i];
+            avgDistance /= state.ghostDistanceTraveled.Length;
+            
+            float variance = 0f;
+            for (int i = 0; i < state.ghostDistanceTraveled.Length; i++)
+            {
+                float diff = state.ghostDistanceTraveled[i] - avgDistance;
+                variance += diff * diff;
+            }
+            variance /= state.ghostDistanceTraveled.Length;
+            metrics.workloadBalance = Mathf.Sqrt(variance);
+        }
+        
+        // 4. Target Conflict Count (multi-agent metric)
+        metrics.targetConflictCount = state.targetConflictCount;
     }
 
     List<Region> BuildRegions(int mapWidth, int count, int overlap)
@@ -605,6 +679,12 @@ public class GhostSimulationRunner : MonoBehaviour
         
         // Tilemap origin for coordinate conversion (same as GridManager)
         public Vector3Int tilemapOrigin = Vector3Int.zero;
+        
+        // Phase 1 Metrics Tracking
+        public int totalGhostMoves = 0;
+        public int totalRevisitMoves = 0;
+        public float[] ghostDistanceTraveled;
+        public int targetConflictCount = 0;
 
         public SimState(int width, int height)
         {
@@ -631,9 +711,14 @@ public class GhostSimulationRunner : MonoBehaviour
         public Vector2Int pos;
         public Vector2Int currentTarget;
         public GhostAgent logic;
+        public float distanceThisStep = 0f;  // Track distance for this step
+        public bool revisitThisStep = false; // Track if revisit this step
 
         public bool Step(SimState state, float distanceWeight, float ageWeight, bool useRegion, int visionRange)
         {
+            distanceThisStep = 0f;
+            revisitThisStep = false;
+            
             ClearOldTarget(state.worldState);
 
             state.worldState.UpdateGhost(id, pos);
@@ -648,7 +733,16 @@ public class GhostSimulationRunner : MonoBehaviour
 
             if (path != null && path.Count > 1)
             {
+                Vector2Int oldPos = pos;
                 pos = path[1];
+                
+                // Track distance traveled
+                distanceThisStep = Vector2Int.Distance(oldPos, pos);
+                
+                // Track if this cell was visited before (for revisit ratio)
+                if (state.visitCount[pos.x, pos.y] > 0)
+                    revisitThisStep = true;
+                
                 state.worldState.UpdateGhost(id, pos);
                 logic.UpdateSharedState(state.worldState, pos);
             }
@@ -733,16 +827,29 @@ public class GhostSimulationRunner : MonoBehaviour
     public class EpisodeMetrics
     {
         public int seed;
+        public int totalSteps = 0;
         public bool captured = false;
         public int detectStep = -1;
         public int capturePhaseStartStep = -1;
         public int captureStep = -1;
         public int firstFullCoverageStep = -1;
         public float finalCoverageRatio = 0f;
+        public float meanRevisitInterval = -1f;
         public int maxCellAge = 0;
         public float avgCellAge = 0f;
-        public float meanRevisitInterval = -1f;
-        public int totalSteps = 0;
+        public float revisitRatio = 0f;
+        public float avgIdleness = 0f;
+        public int maxIdleness = 0;
+        public float workloadBalance = 0f;
+        public int targetConflictCount = 0;
+
+        public int gap => (captureStep >= 0 && detectStep >= 0) ? captureStep - detectStep : -1;
+
+        public override string ToString()
+        {
+            return $"[Seed {seed}] Captured:{captured} Detect:{detectStep} Capture:{captureStep} Gap:{gap} " +
+                   $"Coverage:{finalCoverageRatio:P1} Revisit:{revisitRatio:P1} Balance:{workloadBalance:F1} Conflicts:{targetConflictCount}";
+        }
     }
 
     public class BatchMetrics
@@ -820,13 +927,14 @@ public class GhostSimulationRunner : MonoBehaviour
         public string ToCsv()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("seed,captured,detectStep,capturePhaseStartStep,captureStep,firstFullCoverageStep,finalCoverageRatio,maxCellAge,avgCellAge,meanRevisitInterval,totalSteps");
+            sb.AppendLine("seed,captured,detectStep,capturePhaseStartStep,captureStep,firstFullCoverageStep,finalCoverageRatio,maxCellAge,avgCellAge,meanRevisitInterval,totalSteps,revisitRatio,avgIdleness,maxIdleness,workloadBalance,targetConflictCount");
 
             foreach (var r in results)
             {
                 sb.AppendLine(
                     $"{r.seed},{r.captured},{r.detectStep},{r.capturePhaseStartStep},{r.captureStep},{r.firstFullCoverageStep}," +
-                    $"{r.finalCoverageRatio:F4},{r.maxCellAge},{r.avgCellAge:F4},{r.meanRevisitInterval:F4},{r.totalSteps}"
+                    $"{r.finalCoverageRatio:F4},{r.maxCellAge},{r.avgCellAge:F4},{r.meanRevisitInterval:F4},{r.totalSteps}," +
+                    $"{r.revisitRatio:F4},{r.avgIdleness:F4},{r.maxIdleness},{r.workloadBalance:F4},{r.targetConflictCount}"
                 );
             }
 
