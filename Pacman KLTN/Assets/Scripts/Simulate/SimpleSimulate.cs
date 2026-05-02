@@ -37,6 +37,8 @@ public class SimpleSimulate : MonoBehaviour
     [Header("Search Scoring")]
     public float distanceWeight = 1f;
     public float ageWeight = 2f;
+    public SearchScoringMode searchScoringMode = SearchScoringMode.Baseline;
+    public SearchScoreConfig searchScoreConfig = new SearchScoreConfig();
 
     [Header("Pacman")]
     public PacmanMoveMode pacmanMoveMode = PacmanMoveMode.RandomWalk;
@@ -586,6 +588,8 @@ public class SimpleSimulate : MonoBehaviour
 
             GhostAgent logic = new GhostAgent();
             logic.region = ghostRegions[Mathf.Min(ghostIndex, ghostRegions.Count - 1)];
+            logic.searchScoringMode = searchScoringMode;
+            logic.searchScoreConfig = searchScoreConfig;
 
             SimGhost ghost = new SimGhost
             {
@@ -723,6 +727,9 @@ public class SimpleSimulate : MonoBehaviour
 
             state.worldState.UpdateGhost(id, pos);
 
+            logic.searchScoreConfig.distanceWeight = distanceWeight;
+            logic.searchScoreConfig.ageWeight = ageWeight;
+
             currentTarget = state.phase == GhostTeamPhase.Capture
                 ? logic.FindCaptureTarget(pos, state.worldState, state.grid, id, state.ghosts.Count)
                 : FindBestTargetLocal(state, distanceWeight, ageWeight, useRegion);
@@ -778,11 +785,7 @@ public class SimpleSimulate : MonoBehaviour
                     if (state.worldState.reservedTargets.ContainsKey(p))
                         continue;
 
-                    int visit = state.worldState.visitTimes[p.x, p.y];
-                    int age = state.worldState.CurrentStep - visit;
-                    float dist = Vector2Int.Distance(pos, p);
-
-                    float score = dist * distanceWeight - age * ageWeight;
+                    float score = logic.ComputeScore(pos, p, state.worldState);
 
                     if (score < bestScore)
                     {

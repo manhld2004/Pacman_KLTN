@@ -2,10 +2,42 @@ using System.Collections.Generic;
 using Unity.VisualScripting;
 using UnityEngine;
 
+public enum SearchScoringMode
+{
+    Baseline,
+    NormalizedAgeDistance,
+    Enhanced
+}
+
+[System.Serializable]
+public class SearchScoreConfig
+{
+    [Header("Weights")]
+    public float distanceWeight = 1.2f;
+    public float ageWeight = 1.5f;
+    public float frontierWeight = 1.0f;
+    public float teammateWeight = 0.8f;
+
+    [Header("Normalization")]
+    public float maxUsefulDistance = 40f;
+    public float maxUsefulAge = 100f;
+    public int maxFrontier = 20;
+    public int maxTeammatePenalty = 6;
+
+    [Header("Frontier")]
+    public int staleThreshold = 30;
+    public int frontierRadius = 2;
+
+    [Header("Team Separation")]
+    public int minSeparation = 6;
+}
+
 [System.Serializable]
 public class GhostAgent
 {
     public Region region;
+    public SearchScoringMode searchScoringMode = SearchScoringMode.NormalizedAgeDistance;
+    public SearchScoreConfig searchScoreConfig = new SearchScoreConfig();
 
     // =========================
     // SEARCH
@@ -53,11 +85,66 @@ public class GhostAgent
         Vector2Int to,
         SharedWorldState worldState)
     {
+        switch (searchScoringMode)
+        {
+            case SearchScoringMode.NormalizedAgeDistance:
+                return ComputeNormalizedAgeDistanceScore(from, to, worldState);
+            case SearchScoringMode.Enhanced:
+                
+            case SearchScoringMode.Baseline:
+            default:
+                return ComputeBaselineScore(from, to, worldState);
+        }
+    }
+
+    private float ComputeBaselineScore(
+        Vector2Int from,
+        Vector2Int to,
+        SharedWorldState worldState)
+    {
         int visit = worldState.visitTimes[to.x, to.y];
         int age = worldState.CurrentStep - visit;
         float dist = Vector2Int.Distance(from, to);
 
         return dist - age * 2f;
+    }
+
+    private float ComputeNormalizedAgeDistanceScore(
+        Vector2Int from,
+        Vector2Int to,
+        SharedWorldState worldState)
+    {
+        SearchScoreConfig cfg = GetSearchScoreConfig();
+
+        int visit = worldState.visitTimes[to.x, to.y];
+        int age = worldState.CurrentStep - visit;
+        int distance = DistanceManhattan(from, to);
+
+        float normalizedDistance = NormalizeToUnit(distance, cfg.maxUsefulDistance);
+        float normalizedAge = NormalizeToUnit(age, cfg.maxUsefulAge);
+
+        return cfg.distanceWeight * normalizedDistance - cfg.ageWeight * normalizedAge;
+    }
+
+    private SearchScoreConfig GetSearchScoreConfig()
+    {
+        if (searchScoreConfig == null)
+            searchScoreConfig = new SearchScoreConfig();
+
+        return searchScoreConfig;
+    }
+
+    private int DistanceManhattan(Vector2Int a, Vector2Int b)
+    {
+        return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y);
+    }
+
+    private float NormalizeToUnit(float value, float maxValue)
+    {
+        if (maxValue <= 0f)
+            return 0f;
+
+        return Mathf.Clamp01(value / maxValue);
     }
 
     // =========================

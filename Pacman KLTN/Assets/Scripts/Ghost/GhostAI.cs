@@ -37,6 +37,10 @@ public class GhostAI : MonoBehaviour
     [Header("Multi-Agent Phase")]
     public GhostTeamPhase teamPhase = GhostTeamPhase.Search;
 
+    [Header("Search Scoring")]
+    public SearchScoringMode searchScoringMode = SearchScoringMode.Baseline;
+    public SearchScoreConfig searchScoreConfig = new SearchScoreConfig();
+
     [Header("Pathfinding")]
     public float repathInterval = 0.5f;
 
@@ -83,7 +87,9 @@ public class GhostAI : MonoBehaviour
 
         agent = new GhostAgent
         {
-            region = region
+            region = region,
+            searchScoringMode = searchScoringMode,
+            searchScoreConfig = searchScoreConfig
         };
     }
 
@@ -101,6 +107,9 @@ public class GhostAI : MonoBehaviour
             return;
 
         SharedWorldState worldState = GhostManager.Instance.worldState;
+
+        agent.searchScoringMode = searchScoringMode;
+        agent.searchScoreConfig = searchScoreConfig;
 
         ClearOldTarget(currentTarget, worldState);
 

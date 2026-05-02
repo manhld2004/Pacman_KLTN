@@ -278,7 +278,7 @@ public class GridManager : MonoBehaviour
                 int age = worldState.CurrentStep - visit;
 
                 // clamp age
-                float t = Mathf.Clamp01(age / 4000f);
+                float t = Mathf.Clamp01(age / 200f);
 
                 // màu từ xanh → đỏ
                 Color color = Color.Lerp(Color.green, Color.red, t);
