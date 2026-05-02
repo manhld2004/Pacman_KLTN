@@ -52,6 +52,7 @@ public class GhostAgent
         SharedWorldState worldState,
         IGridQuery grid)
     {
+        int[,] distanceMap = BuildDistanceMap(logicPos, grid);
         Vector2Int best = logicPos;
         float bestScore = float.MaxValue;
 
@@ -67,7 +68,7 @@ public class GhostAgent
                 if (worldState.reservedTargets.ContainsKey(pos))
                     continue;
 
-                float score = ComputeScore(logicPos, pos, worldState);
+                float score = ComputeScore(logicPos, pos, worldState, distanceMap);
 
                 if (score < bestScore)
                 {
@@ -83,12 +84,13 @@ public class GhostAgent
     public float ComputeScore(
         Vector2Int from,
         Vector2Int to,
-        SharedWorldState worldState)
+        SharedWorldState worldState,
+        int[,] distanceMap)
     {
         switch (searchScoringMode)
         {
             case SearchScoringMode.NormalizedAgeDistance:
-                return ComputeNormalizedAgeDistanceScore(from, to, worldState);
+                return ComputeNormalizedAgeDistanceScore(from, to, worldState, distanceMap);
             case SearchScoringMode.Enhanced:
                 
             case SearchScoringMode.Baseline:
@@ -112,18 +114,59 @@ public class GhostAgent
     private float ComputeNormalizedAgeDistanceScore(
         Vector2Int from,
         Vector2Int to,
-        SharedWorldState worldState)
+        SharedWorldState worldState,
+        int[,] distanceMap)
     {
         SearchScoreConfig cfg = GetSearchScoreConfig();
 
         int visit = worldState.visitTimes[to.x, to.y];
         int age = worldState.CurrentStep - visit;
-        int distance = DistanceManhattan(from, to);
+        int distance = GetPathDistance(from, to, distanceMap);
+
+        if (distance < 0)
+            return float.MaxValue;
 
         float normalizedDistance = NormalizeToUnit(distance, cfg.maxUsefulDistance);
         float normalizedAge = NormalizeToUnit(age, cfg.maxUsefulAge);
 
         return cfg.distanceWeight * normalizedDistance - cfg.ageWeight * normalizedAge;
+    }
+
+    public int[,] BuildDistanceMap(Vector2Int origin, IGridQuery grid)
+    {
+        int[,] distanceMap = new int[grid.Width, grid.Height];
+
+        for (int x = 0; x < grid.Width; x++)
+        {
+            for (int y = 0; y < grid.Height; y++)
+            {
+                distanceMap[x, y] = -1;
+            }
+        }
+
+        if (!grid.IsWalkable(origin))
+            return distanceMap;
+
+        Queue<Vector2Int> queue = new Queue<Vector2Int>();
+        queue.Enqueue(origin);
+        distanceMap[origin.x, origin.y] = 0;
+
+        while (queue.Count > 0)
+        {
+            Vector2Int current = queue.Dequeue();
+            int nextDistance = distanceMap[current.x, current.y] + 1;
+
+            foreach (Vector2Int neighbor in grid.GetNeighbors(current))
+            {
+                if (distanceMap[neighbor.x, neighbor.y] != -1)
+                    continue;
+
+                distanceMap[neighbor.x, neighbor.y] = nextDistance;
+                queue.Enqueue(neighbor);
+            }
+        }
+
+        return distanceMap;
     }
 
     private SearchScoreConfig GetSearchScoreConfig()
@@ -134,9 +177,15 @@ public class GhostAgent
         return searchScoreConfig;
     }
 
-    private int DistanceManhattan(Vector2Int a, Vector2Int b)
+    private int GetPathDistance(Vector2Int from, Vector2Int to, int[,] distanceMap)
     {
-        return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y);
+        if (distanceMap == null)
+            return Mathf.Abs(from.x - to.x) + Mathf.Abs(from.y - to.y);
+
+        if (to.x < 0 || to.y < 0 || to.x >= distanceMap.GetLength(0) || to.y >= distanceMap.GetLength(1))
+            return -1;
+
+        return distanceMap[to.x, to.y];
     }
 
     private float NormalizeToUnit(float value, float maxValue)

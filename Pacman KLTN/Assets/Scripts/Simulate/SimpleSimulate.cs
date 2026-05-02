@@ -35,8 +35,6 @@ public class SimpleSimulate : MonoBehaviour
     public int captureLostSightSteps = 4;
 
     [Header("Search Scoring")]
-    public float distanceWeight = 1f;
-    public float ageWeight = 2f;
     public SearchScoringMode searchScoringMode = SearchScoringMode.Baseline;
     public SearchScoreConfig searchScoreConfig = new SearchScoreConfig();
 
@@ -157,7 +155,7 @@ public class SimpleSimulate : MonoBehaviour
 
             foreach (var ghost in state.ghosts)
             {
-                bool detected = ghost.Step(state, distanceWeight, ageWeight, useXPartition, visionRange);
+                bool detected = ghost.Step(state, useXPartition, visionRange);
 
                 // Track metrics
                 state.totalGhostMoves++;
@@ -718,7 +716,7 @@ public class SimpleSimulate : MonoBehaviour
         public float distanceThisStep = 0f;  // Track distance for this step
         public bool revisitThisStep = false; // Track if revisit this step
 
-        public bool Step(SimState state, float distanceWeight, float ageWeight, bool useRegion, int visionRange)
+        public bool Step(SimState state, bool useRegion, int visionRange)
         {
             distanceThisStep = 0f;
             revisitThisStep = false;
@@ -727,12 +725,11 @@ public class SimpleSimulate : MonoBehaviour
 
             state.worldState.UpdateGhost(id, pos);
 
-            logic.searchScoreConfig.distanceWeight = distanceWeight;
-            logic.searchScoreConfig.ageWeight = ageWeight;
+            int[,] distanceMap = logic.BuildDistanceMap(pos, state.grid);
 
             currentTarget = state.phase == GhostTeamPhase.Capture
                 ? logic.FindCaptureTarget(pos, state.worldState, state.grid, id, state.ghosts.Count)
-                : FindBestTargetLocal(state, distanceWeight, ageWeight, useRegion);
+                : FindBestTargetLocal(state, useRegion, distanceMap);
 
             ReserveTarget(state.worldState);
 
@@ -765,7 +762,7 @@ public class SimpleSimulate : MonoBehaviour
             return detected;
         }
 
-        Vector2Int FindBestTargetLocal(SimState state, float distanceWeight, float ageWeight, bool useRegion)
+        Vector2Int FindBestTargetLocal(SimState state, bool useRegion, int[,] distanceMap)
         {
             Vector2Int best = pos;
             float bestScore = float.MaxValue;
@@ -785,7 +782,7 @@ public class SimpleSimulate : MonoBehaviour
                     if (state.worldState.reservedTargets.ContainsKey(p))
                         continue;
 
-                    float score = logic.ComputeScore(pos, p, state.worldState);
+                    float score = logic.ComputeScore(pos, p, state.worldState, distanceMap);
 
                     if (score < bestScore)
                     {
