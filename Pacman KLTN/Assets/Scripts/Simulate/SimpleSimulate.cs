@@ -782,7 +782,7 @@ public class SimpleSimulate : MonoBehaviour
                     if (state.worldState.reservedTargets.ContainsKey(p))
                         continue;
 
-                    float score = logic.ComputeScore(pos, p, state.worldState, distanceMap);
+                    float score = logic.ComputeScore(pos, p, state.worldState, state.grid, distanceMap);
 
                     if (score < bestScore)
                     {

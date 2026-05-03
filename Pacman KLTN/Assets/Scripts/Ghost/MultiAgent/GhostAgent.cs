@@ -68,7 +68,7 @@ public class GhostAgent
                 if (worldState.reservedTargets.ContainsKey(pos))
                     continue;
 
-                float score = ComputeScore(logicPos, pos, worldState, distanceMap);
+                float score = ComputeScore(logicPos, pos, worldState, grid, distanceMap);
 
                 if (score < bestScore)
                 {
@@ -85,6 +85,7 @@ public class GhostAgent
         Vector2Int from,
         Vector2Int to,
         SharedWorldState worldState,
+        IGridQuery grid,
         int[,] distanceMap)
     {
         switch (searchScoringMode)
@@ -92,7 +93,7 @@ public class GhostAgent
             case SearchScoringMode.NormalizedAgeDistance:
                 return ComputeNormalizedAgeDistanceScore(from, to, worldState, distanceMap);
             case SearchScoringMode.Enhanced:
-                
+                return ComputeEnhancedScore(from, to, worldState, grid, distanceMap);
             case SearchScoringMode.Baseline:
             default:
                 return ComputeBaselineScore(from, to, worldState);
@@ -130,6 +131,62 @@ public class GhostAgent
         float normalizedAge = NormalizeToUnit(age, cfg.maxUsefulAge);
 
         return cfg.distanceWeight * normalizedDistance - cfg.ageWeight * normalizedAge;
+    }
+
+    private float ComputeEnhancedScore(
+        Vector2Int from,
+        Vector2Int to,
+        SharedWorldState worldState,
+        IGridQuery grid,
+        int[,] distanceMap)
+    {
+        SearchScoreConfig cfg = GetSearchScoreConfig();
+
+        int visit = worldState.visitTimes[to.x, to.y];
+        int age = worldState.CurrentStep - visit;
+        int distance = GetPathDistance(from, to, distanceMap);
+
+        if (distance < 0)
+            return float.MaxValue;
+
+        float normalizedDistance = NormalizeToUnit(distance, cfg.maxUsefulDistance);
+        float normalizedAge = NormalizeToUnit(age, cfg.maxUsefulAge);
+        int frontierScore = ComputeFrontierScore(to, worldState, grid, cfg);
+        float normalizedFrontier = NormalizeToUnit(frontierScore, cfg.maxFrontier);
+
+        return cfg.distanceWeight * normalizedDistance
+            - cfg.ageWeight * normalizedAge
+            - cfg.frontierWeight * normalizedFrontier;
+    }
+
+    private int ComputeFrontierScore(
+        Vector2Int cell,
+        SharedWorldState worldState,
+        IGridQuery grid,
+        SearchScoreConfig cfg)
+    {
+        if (grid == null)
+            return 0;
+
+        int score = 0;
+
+        for (int dx = -cfg.frontierRadius; dx <= cfg.frontierRadius; dx++)
+        {
+            for (int dy = -cfg.frontierRadius; dy <= cfg.frontierRadius; dy++)
+            {
+                Vector2Int p = new Vector2Int(cell.x + dx, cell.y + dy);
+
+                if (!grid.IsWalkable(p))
+                    continue;
+
+                int age = worldState.CurrentStep - worldState.visitTimes[p.x, p.y];
+
+                if (age >= cfg.staleThreshold)
+                    score++;
+            }
+        }
+
+        return score;
     }
 
     public int[,] BuildDistanceMap(Vector2Int origin, IGridQuery grid)
