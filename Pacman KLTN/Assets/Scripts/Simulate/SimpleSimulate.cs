@@ -12,6 +12,8 @@ public class SimpleSimulate : MonoBehaviour
     public int episodeCount = 10;
     public int randomSeed = 0;
     public int maxStepsPerEpisode = 1000;
+    public SimulationMode simulationMode = SimulationMode.Gameplay;
+    public bool patrolRandomizeStartBySeed = false;
 
     [Header("Tilemap Source")]
     public Tilemap groundTilemapSource;
@@ -29,6 +31,9 @@ public class SimpleSimulate : MonoBehaviour
     public int ghostCount = 3;
     public int visionRange = 4;
     public bool useXPartition = true;
+    public bool useBfsPartition = false;
+    public bool useSoftBfsPartition = false;
+    public int softBoundaryRadius = 2;
     public int partitionOverlap = 1;
 
     [Header("Capture Recovery")]
@@ -55,6 +60,12 @@ public class SimpleSimulate : MonoBehaviour
         GreedyEscape
     }
 
+    public enum SimulationMode
+    {
+        Gameplay,
+        PatrolOnly
+    }
+
     void Start()
     {
         if (runOnStart)
@@ -65,8 +76,15 @@ public class SimpleSimulate : MonoBehaviour
     public void RunBatch()
     {
         BatchMetrics batch = new BatchMetrics();
+        int episodesToRun = episodeCount;
 
-        for (int i = 0; i < episodeCount; i++)
+        if (simulationMode == SimulationMode.PatrolOnly && !patrolRandomizeStartBySeed && episodeCount > 1)
+        {
+            episodesToRun = 1;
+            Debug.Log("[SIM] PatrolOnly mode is deterministic with current setup; running a single episode.");
+        }
+
+        for (int i = 0; i < episodesToRun; i++)
         {
             int seed = randomSeed + i;
             EpisodeMetrics result = RunEpisode(seed);
@@ -74,17 +92,32 @@ public class SimpleSimulate : MonoBehaviour
 
             if (logEachEpisode)
             {
-                Debug.Log(
-                    $"[Episode {i}] " +
-                    $"Captured={result.captured}, " +
-                    $"DetectStep={result.detectStep}, " +
-                    $"CaptureStep={result.captureStep}, " +
-                    $"FullCoverageStep={result.firstFullCoverageStep}, " +
-                    $"Coverage={result.finalCoverageRatio:F3}, " +
-                    $"MaxCellAge={result.maxCellAge}, " +
-                    $"AvgCellAge={result.avgCellAge:F2}, " +
-                    $"MeanRevisit={result.meanRevisitInterval:F2}"
-                );
+                if (simulationMode == SimulationMode.Gameplay)
+                {
+                    Debug.Log(
+                        $"[Episode {i}] " +
+                        $"Mode={result.simulationMode}, " +
+                        $"Captured={result.captured}, " +
+                        $"DetectStep={result.detectStep}, " +
+                        $"CaptureStep={result.captureStep}, " +
+                        $"Gap={result.gap}"
+                    );
+                }
+                else
+                {
+                    Debug.Log(
+                        $"[Episode {i}] " +
+                        $"Mode={result.simulationMode}, " +
+                        $"FullCoverageStep={result.firstFullCoverageStep}, " +
+                        $"Coverage={result.finalCoverageRatio:F3}, " +
+                        $"MaxCellAge={result.maxCellAge}, " +
+                        $"AvgCellAge={result.avgCellAge:F2}, " +
+                        $"MeanRevisit={result.meanRevisitInterval:F2}, " +
+                        $"RevisitRatio={result.revisitRatio:F3}, " +
+                        $"Balance={result.workloadBalance:F3}, " +
+                        $"Conflicts={result.targetConflictCount}"
+                    );
+                }
             }
         }
 
@@ -104,10 +137,12 @@ public class SimpleSimulate : MonoBehaviour
         System.Random rng = new System.Random(seed);
         SimState state = BuildState(rng);
         int captureLostSightCounter = 0;
+        bool isGameplayMode = simulationMode == SimulationMode.Gameplay;
 
         EpisodeMetrics metrics = new EpisodeMetrics
         {
-            seed = seed
+            seed = seed,
+            simulationMode = simulationMode
         };
 
         // Ä‘Ã¡nh dáº¥u tile ban Ä‘áº§u cá»§a ghost
@@ -124,7 +159,7 @@ public class SimpleSimulate : MonoBehaviour
             state.worldState.reservedTargets.Clear();
             
             // CHECK CAPTURE BEFORE MOVEMENT (to ensure gap between detect and capture)
-            if (CheckCapture(state))
+            if (isGameplayMode && CheckCapture(state))
             {
                 metrics.captured = true;
                 metrics.captureStep = step;
@@ -133,16 +168,18 @@ public class SimpleSimulate : MonoBehaviour
                 break;
             }
 
-            // 1. Pacman move - STORE OLD POSITION FOR LOGGING
-            Vector2Int pacmanOldPos = state.pacmanPos;
-            StepPacman(state, rng);
-            Vector2Int pacmanNewPos = state.pacmanPos;
-            
-            // DEBUG: Log first 5 steps
-            if (step <= 5 && logEachEpisode && seed % 10 == 0)
+            // 1. Pacman move (gameplay mode only)
+            if (isGameplayMode)
             {
-                Debug.Log($"[Step {step}] Pacman: {pacmanOldPos}->{pacmanNewPos}, " +
-                    $"Ghost0: {state.ghosts[0].pos}");
+                Vector2Int pacmanOldPos = state.pacmanPos;
+                StepPacman(state, rng);
+                Vector2Int pacmanNewPos = state.pacmanPos;
+
+                if (step <= 5 && logEachEpisode && seed % 10 == 0)
+                {
+                    Debug.Log($"[Step {step}] Pacman: {pacmanOldPos}->{pacmanNewPos}, " +
+                        $"Ghost0: {state.ghosts[0].pos}");
+                }
             }
 
             // 2. Ghost move
@@ -155,15 +192,19 @@ public class SimpleSimulate : MonoBehaviour
 
             foreach (var ghost in state.ghosts)
             {
-                bool detected = ghost.Step(state, useXPartition, visionRange);
+                bool rawDetected = ghost.Step(state, useXPartition, visionRange);
+                bool detected = isGameplayMode && rawDetected;
 
-                // Track metrics
-                state.totalGhostMoves++;
-                state.ghostDistanceTraveled[ghost.id] += ghost.distanceThisStep;
-                if (ghost.revisitThisStep)
-                    state.totalRevisitMoves++;
+                // Patrol-only metrics tracking
+                if (!isGameplayMode)
+                {
+                    state.totalGhostMoves++;
+                    state.ghostDistanceTraveled[ghost.id] += ghost.distanceThisStep;
+                    if (ghost.revisitThisStep)
+                        state.totalRevisitMoves++;
+                }
 
-                if (detected && metrics.detectStep < 0)
+                if (isGameplayMode && detected && metrics.detectStep < 0)
                 {
                     metrics.detectStep = step;
                     if (metrics.capturePhaseStartStep < 0)
@@ -171,17 +212,17 @@ public class SimpleSimulate : MonoBehaviour
                     
                 }
 
-                if (detected && state.phase == GhostTeamPhase.Search)
+                if (isGameplayMode && detected && state.phase == GhostTeamPhase.Search)
                 {
                     state.phase = GhostTeamPhase.Capture;
                     state.worldState.UpdatePacmanLastKnown(state.pacmanPos);
                 }
 
-                if (detected)
+                if (isGameplayMode && detected)
                     anyGhostDetected = true;
             }
 
-            if (state.phase == GhostTeamPhase.Capture)
+            if (isGameplayMode && state.phase == GhostTeamPhase.Capture)
             {
                 if (anyGhostDetected)
                 {
@@ -201,14 +242,17 @@ public class SimpleSimulate : MonoBehaviour
                 }
             }
 
-            float coverage = CalculateCoverageRatio(state);
-            metrics.finalCoverageRatio = coverage;
+            if (!isGameplayMode)
+            {
+                float coverage = CalculateCoverageRatio(state);
+                metrics.finalCoverageRatio = coverage;
 
-            if (metrics.firstFullCoverageStep < 0 && coverage >= 0.999f)
-                metrics.firstFullCoverageStep = step;
+                if (metrics.firstFullCoverageStep < 0 && coverage >= 0.999f)
+                    metrics.firstFullCoverageStep = step;
+            }
         }
 
-        FinalizeMetrics(state, metrics);
+        FinalizeMetrics(state, metrics, isGameplayMode);
         return metrics;
     }
 
@@ -448,8 +492,28 @@ public class SimpleSimulate : MonoBehaviour
         return false;
     }
 
-    void FinalizeMetrics(SimState state, EpisodeMetrics metrics)
+    void FinalizeMetrics(SimState state, EpisodeMetrics metrics, bool isGameplayMode)
     {
+        metrics.totalSteps = state.currentStep;
+
+        if (isGameplayMode)
+        {
+            metrics.firstFullCoverageStep = -1;
+            metrics.finalCoverageRatio = -1f;
+            metrics.meanRevisitInterval = -1f;
+            metrics.maxCellAge = -1;
+            metrics.avgCellAge = -1f;
+            metrics.revisitRatio = -1f;
+            metrics.workloadBalance = -1f;
+            metrics.targetConflictCount = -1;
+            return;
+        }
+
+        metrics.captured = false;
+        metrics.detectStep = -1;
+        metrics.capturePhaseStartStep = -1;
+        metrics.captureStep = -1;
+
         int walkableCount = 0;
         int maxAge = 0;
         float ageSum = 0f;
@@ -480,20 +544,12 @@ public class SimpleSimulate : MonoBehaviour
         metrics.maxCellAge = maxAge;
         metrics.avgCellAge = walkableCount > 0 ? ageSum / walkableCount : 0f;
         metrics.meanRevisitInterval = revisitCount > 0 ? revisitSum / revisitCount : -1f;
-        metrics.totalSteps = state.currentStep;
-        
-        // ===== PHASE 1 METRICS CALCULATION =====
-        
         // 1. Revisit Ratio (efficiency of search)
         metrics.revisitRatio = state.totalGhostMoves > 0 
             ? (float)state.totalRevisitMoves / state.totalGhostMoves 
             : 0f;
-        
-        // 2. Idleness Metrics (cell coverage quality)
-        metrics.avgIdleness = metrics.avgCellAge;
-        metrics.maxIdleness = maxAge;
-        
-        // 3. Workload Balance (ghost coordination)
+
+        // 2. Workload Balance (ghost coordination)
         if (state.ghostDistanceTraveled != null && state.ghostDistanceTraveled.Length > 0)
         {
             float avgDistance = 0f;
@@ -510,8 +566,8 @@ public class SimpleSimulate : MonoBehaviour
             variance /= state.ghostDistanceTraveled.Length;
             metrics.workloadBalance = Mathf.Sqrt(variance);
         }
-        
-        // 4. Target Conflict Count (multi-agent metric)
+
+        // 3. Target Conflict Count (multi-agent metric)
         metrics.targetConflictCount = state.targetConflictCount;
     }
 
@@ -537,6 +593,159 @@ public class SimpleSimulate : MonoBehaviour
         }
 
         return result;
+    }
+
+    List<Region> BuildBfsRegions(SimState state)
+    {
+        int ghostTotal = state.ghosts.Count;
+        if (ghostTotal == 0)
+            return new List<Region>();
+
+        List<Region> fallbackRegions = BuildRegions(state.width, ghostTotal, partitionOverlap);
+
+        int[,] ownerMap = new int[state.width, state.height];
+        HashSet<Vector2Int>[] ownedCells = new HashSet<Vector2Int>[ghostTotal];
+        List<Vector2Int> seeds = new List<Vector2Int>(ghostTotal);
+        Queue<Vector2Int> queue = new Queue<Vector2Int>();
+
+        for (int x = 0; x < state.width; x++)
+        {
+            for (int y = 0; y < state.height; y++)
+                ownerMap[x, y] = -1;
+        }
+
+        for (int i = 0; i < ghostTotal; i++)
+        {
+            ownedCells[i] = new HashSet<Vector2Int>();
+
+            Vector2Int seed = state.ghosts[i].pos;
+            seeds.Add(seed);
+
+            if (!state.grid.IsWalkable(seed))
+                continue;
+
+            ownerMap[seed.x, seed.y] = i;
+            ownedCells[i].Add(seed);
+            queue.Enqueue(seed);
+        }
+
+        while (queue.Count > 0)
+        {
+            Vector2Int current = queue.Dequeue();
+            int currentOwner = ownerMap[current.x, current.y];
+
+            foreach (Vector2Int neighbor in state.grid.GetNeighbors(current))
+            {
+                if (ownerMap[neighbor.x, neighbor.y] != -1)
+                    continue;
+
+                ownerMap[neighbor.x, neighbor.y] = currentOwner;
+                ownedCells[currentOwner].Add(neighbor);
+                queue.Enqueue(neighbor);
+            }
+        }
+
+        for (int x = 0; x < state.width; x++)
+        {
+            for (int y = 0; y < state.height; y++)
+            {
+                Vector2Int cell = new Vector2Int(x, y);
+
+                if (!state.grid.IsWalkable(cell))
+                    continue;
+
+                if (ownerMap[x, y] != -1)
+                    continue;
+
+                int bestOwner = 0;
+                int bestDist = int.MaxValue;
+
+                for (int i = 0; i < seeds.Count; i++)
+                {
+                    Vector2Int seed = seeds[i];
+                    int dist = Mathf.Abs(x - seed.x) + Mathf.Abs(y - seed.y);
+
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        bestOwner = i;
+                    }
+                }
+
+                ownerMap[x, y] = bestOwner;
+                ownedCells[bestOwner].Add(cell);
+            }
+        }
+
+        HashSet<Vector2Int>[] extendedCells = useSoftBfsPartition
+            ? BuildSoftBoundaries(state, ownedCells)
+            : null;
+
+        List<Region> regions = new List<Region>(ghostTotal);
+
+        for (int i = 0; i < ghostTotal; i++)
+        {
+            if (ownedCells[i].Count == 0)
+                return fallbackRegions;
+
+            int minX = state.width - 1;
+            int maxX = 0;
+
+            foreach (Vector2Int cell in ownedCells[i])
+            {
+                if (cell.x < minX)
+                    minX = cell.x;
+
+                if (cell.x > maxX)
+                    maxX = cell.x;
+            }
+
+            regions.Add(new Region
+            {
+                minX = minX,
+                maxX = maxX,
+                ownedCells = ownedCells[i],
+                extendedCells = extendedCells != null ? extendedCells[i] : null
+            });
+        }
+
+        return regions;
+    }
+
+    HashSet<Vector2Int>[] BuildSoftBoundaries(SimState state, HashSet<Vector2Int>[] ownedCells)
+    {
+        HashSet<Vector2Int>[] extendedCells = new HashSet<Vector2Int>[ownedCells.Length];
+
+        for (int i = 0; i < ownedCells.Length; i++)
+        {
+            HashSet<Vector2Int> boundary = new HashSet<Vector2Int>();
+
+            foreach (Vector2Int owned in ownedCells[i])
+            {
+                for (int dx = -softBoundaryRadius; dx <= softBoundaryRadius; dx++)
+                {
+                    for (int dy = -softBoundaryRadius; dy <= softBoundaryRadius; dy++)
+                    {
+                        if (Mathf.Abs(dx) + Mathf.Abs(dy) > softBoundaryRadius)
+                            continue;
+
+                        Vector2Int candidate = new Vector2Int(owned.x + dx, owned.y + dy);
+
+                        if (!state.grid.IsWalkable(candidate))
+                            continue;
+
+                        if (ownedCells[i].Contains(candidate))
+                            continue;
+
+                        boundary.Add(candidate);
+                    }
+                }
+            }
+
+            extendedCells[i] = boundary;
+        }
+
+        return extendedCells;
     }
 
     void InitializeFromScene(SimState state, System.Random rng)
@@ -569,7 +778,9 @@ public class SimpleSimulate : MonoBehaviour
         if (ghostObjects == null || ghostObjects.Length == 0)
             throw new InvalidOperationException($"Ghost objects array is empty. Scene preset requires {ghostCount} ghosts to be assigned.");
 
+        bool randomizePatrolStarts = simulationMode == SimulationMode.PatrolOnly && patrolRandomizeStartBySeed;
         List<Region> ghostRegions = BuildRegions(state.width, ghostCount, partitionOverlap);
+        HashSet<Vector2Int> usedSpawnPositions = new HashSet<Vector2Int>();
         int ghostIndex = 0;
 
         foreach (GameObject ghostObj in ghostObjects)
@@ -580,12 +791,31 @@ public class SimpleSimulate : MonoBehaviour
             if (ghostObj == null)
                 throw new InvalidOperationException($"Ghost object at index {ghostIndex} is null. All ghost slots must be filled.");
 
-            Vector2Int ghostLogicPos = WorldToLogic(ghostObj.transform.position, groundTilemap, state);
-            if (!state.IsWalkable(ghostLogicPos))
-                throw new InvalidOperationException($"Ghost {ghostIndex} position {ghostLogicPos} (world: {ghostObj.transform.position}) is not walkable. Please place all ghosts on valid walkable tiles.");
+            Region ghostRegion = ghostRegions[Mathf.Min(ghostIndex, ghostRegions.Count - 1)];
+
+            Vector2Int ghostLogicPos;
+            if (randomizePatrolStarts)
+            {
+                ghostLogicPos = GetRandomWalkableInRegion(state, ghostRegion, rng);
+
+                int attempts = 0;
+                while (usedSpawnPositions.Contains(ghostLogicPos) && attempts < 50)
+                {
+                    ghostLogicPos = GetRandomWalkableInRegion(state, ghostRegion, rng);
+                    attempts++;
+                }
+            }
+            else
+            {
+                ghostLogicPos = WorldToLogic(ghostObj.transform.position, groundTilemap, state);
+                if (!state.IsWalkable(ghostLogicPos))
+                    throw new InvalidOperationException($"Ghost {ghostIndex} position {ghostLogicPos} (world: {ghostObj.transform.position}) is not walkable. Please place all ghosts on valid walkable tiles.");
+            }
+
+            usedSpawnPositions.Add(ghostLogicPos);
 
             GhostAgent logic = new GhostAgent();
-            logic.region = ghostRegions[Mathf.Min(ghostIndex, ghostRegions.Count - 1)];
+            logic.region = ghostRegion;
             logic.searchScoringMode = searchScoringMode;
             logic.searchScoreConfig = searchScoreConfig;
 
@@ -598,8 +828,23 @@ public class SimpleSimulate : MonoBehaviour
             };
 
             state.ghosts.Add(ghost);
-            Debug.Log($"[SCENE] Ghost {ghostIndex} loaded at logic pos: {ghostLogicPos} (world: {ghostObj.transform.position})");
+            if (randomizePatrolStarts)
+                Debug.Log($"[SCENE] Ghost {ghostIndex} randomized at logic pos: {ghostLogicPos}");
+            else
+                Debug.Log($"[SCENE] Ghost {ghostIndex} loaded at logic pos: {ghostLogicPos} (world: {ghostObj.transform.position})");
             ghostIndex++;
+        }
+
+        if (useBfsPartition)
+        {
+            List<Region> bfsRegions = BuildBfsRegions(state);
+
+            for (int i = 0; i < state.ghosts.Count; i++)
+                state.ghosts[i].logic.region = bfsRegions[i];
+
+            Debug.Log(useSoftBfsPartition
+                ? "[SCENE PRESET] Applied multi-source BFS soft partition.":
+                "[SCENE PRESET] Applied multi-source BFS search partition.");
         }
 
         if (ghostIndex < ghostCount)
@@ -764,6 +1009,11 @@ public class SimpleSimulate : MonoBehaviour
 
         Vector2Int FindBestTargetLocal(SimState state, bool useRegion, int[,] distanceMap)
         {
+            // Use shared GhostAgent search logic so BFS soft partition (owned/extended + penalty)
+            // behaves the same in simulation and gameplay paths.
+            if (useRegion)
+                return logic.FindBestTarget(pos, state.worldState, state.grid);
+
             Vector2Int best = pos;
             float bestScore = float.MaxValue;
 
@@ -827,27 +1077,26 @@ public class SimpleSimulate : MonoBehaviour
     public class EpisodeMetrics
     {
         public int seed;
+        public SimulationMode simulationMode;
         public int totalSteps = 0;
         public bool captured = false;
         public int detectStep = -1;
         public int capturePhaseStartStep = -1;
         public int captureStep = -1;
         public int firstFullCoverageStep = -1;
-        public float finalCoverageRatio = 0f;
+        public float finalCoverageRatio = -1f;
         public float meanRevisitInterval = -1f;
-        public int maxCellAge = 0;
-        public float avgCellAge = 0f;
-        public float revisitRatio = 0f;
-        public float avgIdleness = 0f;
-        public int maxIdleness = 0;
-        public float workloadBalance = 0f;
-        public int targetConflictCount = 0;
+        public int maxCellAge = -1;
+        public float avgCellAge = -1f;
+        public float revisitRatio = -1f;
+        public float workloadBalance = -1f;
+        public int targetConflictCount = -1;
 
         public int gap => (captureStep >= 0 && detectStep >= 0) ? captureStep - detectStep : -1;
 
         public override string ToString()
         {
-            return $"[Seed {seed}] Captured:{captured} Detect:{detectStep} Capture:{captureStep} Gap:{gap} " +
+            return $"[Seed {seed}] Mode:{simulationMode} Captured:{captured} Detect:{detectStep} Capture:{captureStep} Gap:{gap} " +
                    $"Coverage:{finalCoverageRatio:P1} Revisit:{revisitRatio:P1} Balance:{workloadBalance:F1} Conflicts:{targetConflictCount}";
         }
     }
@@ -864,6 +1113,8 @@ public class SimpleSimulate : MonoBehaviour
         public string BuildSummary()
         {
             if (results.Count == 0) return "No results.";
+
+            SimulationMode mode = results[0].simulationMode;
 
             int capturedCount = 0;
             float detectSum = 0f;
@@ -914,28 +1165,57 @@ public class SimpleSimulate : MonoBehaviour
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("===== GHOST SIMULATION SUMMARY =====");
             sb.AppendLine($"Episodes: {results.Count}");
-            sb.AppendLine($"Capture Rate: {(float)capturedCount / results.Count:P2}");
-            sb.AppendLine($"Avg Detect Step: {(detectCount > 0 ? detectSum.ToString("F2") : "N/A")}");
-            sb.AppendLine($"Avg Capture Step: {(captureCount > 0 ? captureSum.ToString("F2") : "N/A")}");
-            sb.AppendLine($"Avg Coverage Ratio: {coverageSum:F3}");
-            sb.AppendLine($"Avg Max Cell Age: {maxAgeSum:F2}");
-            sb.AppendLine($"Avg Cell Age: {avgCellAgeSum:F2}");
-            sb.AppendLine($"Avg Mean Revisit Interval: {(revisitCount > 0 ? revisitSum.ToString("F2") : "N/A")}");
+
+            if (mode == SimulationMode.Gameplay)
+            {
+                sb.AppendLine($"Mode: {mode}");
+                sb.AppendLine($"Capture Rate: {(float)capturedCount / results.Count:P2}");
+                sb.AppendLine($"Avg Detect Step: {(detectCount > 0 ? detectSum.ToString("F2") : "N/A")}");
+                sb.AppendLine($"Avg Capture Step: {(captureCount > 0 ? captureSum.ToString("F2") : "N/A")}");
+            }
+            else
+            {
+                sb.AppendLine($"Mode: {mode}");
+                sb.AppendLine($"Avg Coverage Ratio: {coverageSum:F3}");
+                sb.AppendLine($"Avg Max Cell Age: {maxAgeSum:F2}");
+                sb.AppendLine($"Avg Cell Age: {avgCellAgeSum:F2}");
+                sb.AppendLine($"Avg Mean Revisit Interval: {(revisitCount > 0 ? revisitSum.ToString("F2") : "N/A")}");
+            }
+
             return sb.ToString();
         }
 
         public string ToCsv()
         {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("seed,captured,detectStep,capturePhaseStartStep,captureStep,firstFullCoverageStep,finalCoverageRatio,maxCellAge,avgCellAge,meanRevisitInterval,totalSteps,revisitRatio,avgIdleness,maxIdleness,workloadBalance,targetConflictCount");
+            if (results.Count == 0)
+                return string.Empty;
 
-            foreach (var r in results)
+            StringBuilder sb = new StringBuilder();
+            SimulationMode mode = results[0].simulationMode;
+
+            if (mode == SimulationMode.Gameplay)
             {
-                sb.AppendLine(
-                    $"{r.seed},{r.captured},{r.detectStep},{r.capturePhaseStartStep},{r.captureStep},{r.firstFullCoverageStep}," +
-                    $"{r.finalCoverageRatio:F4},{r.maxCellAge},{r.avgCellAge:F4},{r.meanRevisitInterval:F4},{r.totalSteps}," +
-                    $"{r.revisitRatio:F4},{r.avgIdleness:F4},{r.maxIdleness},{r.workloadBalance:F4},{r.targetConflictCount}"
-                );
+                sb.AppendLine("simMode,seed,captured,detectStep,capturePhaseStartStep,captureStep,gap,totalSteps");
+
+                foreach (var r in results)
+                {
+                    sb.AppendLine(
+                        $"{r.simulationMode},{r.seed},{r.captured},{r.detectStep},{r.capturePhaseStartStep},{r.captureStep},{r.gap},{r.totalSteps}"
+                    );
+                }
+            }
+            else
+            {
+                sb.AppendLine("simMode,seed,firstFullCoverageStep,finalCoverageRatio,maxCellAge,avgCellAge,meanRevisitInterval,totalSteps,revisitRatio,workloadBalance,targetConflictCount");
+
+                foreach (var r in results)
+                {
+                    sb.AppendLine(
+                        $"{r.simulationMode},{r.seed},{r.firstFullCoverageStep}," +
+                        $"{r.finalCoverageRatio:F4},{r.maxCellAge},{r.avgCellAge:F4},{r.meanRevisitInterval:F4},{r.totalSteps}," +
+                        $"{r.revisitRatio:F4},{r.workloadBalance:F4},{r.targetConflictCount}"
+                    );
+                }
             }
 
             return sb.ToString();

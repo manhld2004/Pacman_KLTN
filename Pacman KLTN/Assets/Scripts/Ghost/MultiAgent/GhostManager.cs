@@ -106,4 +106,6 @@ public struct Region
 {
     public int minX;
     public int maxX;
+    public HashSet<Vector2Int> ownedCells;
+    public HashSet<Vector2Int> extendedCells;
 }

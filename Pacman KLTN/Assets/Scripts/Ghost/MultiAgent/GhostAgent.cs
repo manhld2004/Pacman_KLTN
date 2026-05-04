@@ -30,6 +30,9 @@ public class SearchScoreConfig
 
     [Header("Team Separation")]
     public int minSeparation = 6;
+
+    [Header("Partition")]
+    public float partitionWeight = 0.5f;
 }
 
 [System.Serializable]
@@ -44,6 +47,9 @@ public class GhostAgent
     // =========================
     public bool InRegion(Vector2Int pos)
     {
+        if (region.ownedCells != null && region.ownedCells.Count > 0)
+            return region.ownedCells.Contains(pos);
+
         return pos.x >= region.minX && pos.x <= region.maxX;
     }
 
@@ -55,6 +61,58 @@ public class GhostAgent
         int[,] distanceMap = BuildDistanceMap(logicPos, grid);
         Vector2Int best = logicPos;
         float bestScore = float.MaxValue;
+        SearchScoreConfig cfg = GetSearchScoreConfig();
+
+        foreach (Vector2Int pos in EnumerateCandidateCells(grid))
+        {
+            if (worldState.reservedTargets.ContainsKey(pos))
+                continue;
+
+            float score = ComputeScore(logicPos, pos, worldState, grid, distanceMap);
+            score += cfg.partitionWeight * ComputePartitionPenalty(pos);
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                best = pos;
+            }
+        }
+
+        return best;
+    }
+
+    private IEnumerable<Vector2Int> EnumerateCandidateCells(IGridQuery grid)
+    {
+        if (region.ownedCells != null && region.ownedCells.Count > 0)
+        {
+            HashSet<Vector2Int> yielded = new HashSet<Vector2Int>();
+
+            foreach (Vector2Int cell in region.ownedCells)
+            {
+                if (grid.IsWalkable(cell))
+                {
+                    yielded.Add(cell);
+                    yield return cell;
+                }
+            }
+
+            if (region.extendedCells != null && region.extendedCells.Count > 0)
+            {
+                foreach (Vector2Int cell in region.extendedCells)
+                {
+                    if (!grid.IsWalkable(cell))
+                        continue;
+
+                    if (yielded.Contains(cell))
+                        continue;
+
+                    yielded.Add(cell);
+                    yield return cell;
+                }
+            }
+
+            yield break;
+        }
 
         for (int x = region.minX; x <= region.maxX; x++)
         {
@@ -65,20 +123,23 @@ public class GhostAgent
                 if (!grid.IsWalkable(pos))
                     continue;
 
-                if (worldState.reservedTargets.ContainsKey(pos))
-                    continue;
-
-                float score = ComputeScore(logicPos, pos, worldState, grid, distanceMap);
-
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    best = pos;
-                }
+                yield return pos;
             }
         }
+    }
 
-        return best;
+    private float ComputePartitionPenalty(Vector2Int cell)
+    {
+        if (region.ownedCells == null || region.ownedCells.Count == 0)
+            return 0f;
+
+        if (region.ownedCells.Contains(cell))
+            return 0f;
+
+        if (region.extendedCells != null && region.extendedCells.Contains(cell))
+            return 0.25f;
+
+        return 1f;
     }
 
     public float ComputeScore(
