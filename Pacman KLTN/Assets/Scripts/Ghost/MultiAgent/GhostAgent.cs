@@ -314,17 +314,12 @@ public class GhostAgent
         return Mathf.Clamp01(value / maxValue);
     }
 
-    // =========================
-    // SHARED MEMORY
-    // =========================
     public void UpdateSharedState(SharedWorldState worldState, Vector2Int logicPos)
     {
         worldState.MarkVisited(logicPos);
     }
 
-    // =========================
     // VISION
-    // =========================
     public List<Vector2Int> GetVisibleCells(
         Vector2Int origin,
         IGridQuery grid,
