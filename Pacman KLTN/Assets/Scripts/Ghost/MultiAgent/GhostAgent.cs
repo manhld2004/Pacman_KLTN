@@ -65,6 +65,9 @@ public class GhostAgent
 
         foreach (Vector2Int pos in EnumerateCandidateCells(grid))
         {
+            if (pos == logicPos)
+                continue;
+
             if (worldState.reservedTargets.ContainsKey(pos))
                 continue;
 

@@ -119,9 +119,18 @@ public class GhostAI : MonoBehaviour
             gridQuery
         );
 
+        Debug.Log($"[GHOST {ID} SEARCH] Chosen target {currentTarget}");
+        if (worldState.reservedTargets.ContainsKey(currentTarget))
+            Debug.Log($"[GHOST {ID} SEARCH] Target {currentTarget} already reserved by {worldState.reservedTargets[currentTarget]}");
+
         ReserveTarget(currentTarget, worldState);
 
         var path = AStarPathfinder.FindPath(GridPosition, currentTarget);
+
+        if (path == null)
+        {
+            Debug.Log($"[GHOST {ID} SEARCH] No path found from {GridPosition} to {currentTarget}");
+        }
 
         if (path != null && path.Count > 1)
         {
@@ -151,6 +160,12 @@ public class GhostAI : MonoBehaviour
 
             if (visualizer != null)
                 visualizer.DrawPath(path);
+
+            Debug.Log($"[GHOST {ID} SEARCH] Path set length={path.Count}");
+        }
+        else
+        {
+            Debug.Log($"[GHOST {ID} SEARCH] Did not set path (null or too short). Will replan later.");
         }
     }
 
@@ -192,9 +207,16 @@ public class GhostAI : MonoBehaviour
             GhostManager.Instance.ghosts.Count
         );
 
+        Debug.Log($"[GHOST {ID} CAPTURE] Chosen capture target {currentTarget}");
+
         ReserveTarget(currentTarget, worldState);
 
         var path = AStarPathfinder.FindPath(GridPosition, currentTarget);
+
+        if (path == null)
+        {
+            Debug.Log($"[GHOST {ID} CAPTURE] No path found from {GridPosition} to {currentTarget}");
+        }
 
         if (path != null && path.Count > 1)
         {
@@ -233,6 +255,8 @@ public class GhostAI : MonoBehaviour
 
             if (visualizer != null)
                 visualizer.DrawPath(path);
+
+            Debug.Log($"[GHOST {ID} CAPTURE] Path set length={path.Count}");
 
             return;
         }
